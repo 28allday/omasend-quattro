@@ -81,6 +81,14 @@ if [ ! -e "$HOME/.config/omarchy/plugins/$PLUGIN_ID" ]; then
   say "Registering the shell plugin…"
   "$OMARCHY" plugin add "https://github.com/$REPO.git" --yes
 fi
+# A previous install leaves a stale plugins[] self-reference in shell.json
+# that makes `plugin enable` report ok WITHOUT placing the bar widget.
+# Disabling first clears it (harmless when the plugin was never enabled);
+# skip when already enabled so a re-run doesn't move a user-placed widget.
+status="$("$OMARCHY" plugin list 2>/dev/null | awk -v id="$PLUGIN_ID" '$1==id{print $2}')"
+if [ "$status" != "enabled" ]; then
+  "$OMARCHY" plugin disable "$PLUGIN_ID" >/dev/null 2>&1 || true
+fi
 "$OMARCHY" plugin enable "$PLUGIN_ID" right 2>/dev/null \
   || say "Enable it from Setup › Plugins (or: omarchy plugin enable $PLUGIN_ID)"
 
