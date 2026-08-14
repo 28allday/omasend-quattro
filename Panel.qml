@@ -138,12 +138,12 @@ Item {
     root.statusLine = "Sending " + root.stagedPaths.length + " item(s) to " + peer.alias + "…"
   }
 
-  // "Send a file" opens the GTK file chooser via the service (the panel
+  // "Send files/folder" opens the GTK chooser via the service (the panel
   // closes so the dialog isn't under a keyboard-exclusive overlay); the
   // typed-path modal remains only as the no-zenity fallback.
-  function pickFiles(peer) {
+  function pickFiles(peer, wantDir) {
     if (!peer) return
-    if (root.hasService && root.svc.pickAndSend(peer)) {
+    if (root.hasService && root.svc.pickAndSend(peer, wantDir === true)) {
       root.close()
       return
     }
@@ -381,7 +381,8 @@ Item {
                  || event.key === Qt.Key_M) && peer) {
               root.openModal("message", peer); event.accepted = true
             } else if (event.key === Qt.Key_F && peer) {
-              root.pickFiles(peer); event.accepted = true
+              root.pickFiles(peer, (event.modifiers & Qt.ShiftModifier) !== 0)
+              event.accepted = true
             } else if (event.key === Qt.Key_Plus) {
               root.openModal("addpeer", null); event.accepted = true
             }
@@ -662,7 +663,12 @@ Item {
                 Button {
                   iconText: "󰈙"
                   tooltipText: "Send files (f)"
-                  onClicked: root.pickFiles(modelData)
+                  onClicked: root.pickFiles(modelData, false)
+                }
+                Button {
+                  iconText: "󰉋"
+                  tooltipText: "Send a folder (shift+F)"
+                  onClicked: root.pickFiles(modelData, true)
                 }
               }
             }
@@ -977,7 +983,7 @@ Item {
           switch (root.tab) {
             case 0: return root.stagedPaths.length > 0
                     ? "↑↓ pick device · enter send staged · x clear · 1-4 tabs · esc close"
-                    : "↑↓ move · enter/m message · f file · + add remote · 1-4 tabs · esc close"
+                    : "↑↓ move · enter/m message · f files · F folder · + add remote · 1-4 tabs · esc close"
             case 1: return "1-4 tabs · esc close"
             case 2: return "c clear finished · 1-4 tabs · esc close"
             default: return "edits save on enter · 1-4 tabs · esc close"

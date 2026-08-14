@@ -347,12 +347,16 @@ Item {
     }
   }
 
-  function pickAndSend(peer) {
+  // wantDir: false = multi-select files, true = pick folders (sent whole,
+  // expanded on the wire by the engine).
+  function pickAndSend(peer, wantDir) {
     if (!root.hasZenity || picker.running || !peer) return false
     root.pickPeer = peer
-    picker.command = ["zenity", "--file-selection", "--multiple",
-                      "--separator=\n",
-                      "--title", "Send to " + peer.alias + " via Omasend"]
+    var cmd = ["zenity", "--file-selection", "--multiple", "--separator=\n"]
+    if (wantDir === true) cmd.push("--directory")
+    cmd.push("--title", (wantDir === true ? "Send folder to " : "Send to ")
+                        + peer.alias + " via Omasend")
+    picker.command = cmd
     picker.running = true
     return true
   }
