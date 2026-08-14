@@ -121,6 +121,43 @@ if command -v nautilus >/dev/null 2>&1; then
   nautilus -q >/dev/null 2>&1 || true
 fi
 
+# ---- 5. agent context ------------------------------------------------------
+# Teach AI agents on this box what Omasend is and how to send from scripts.
+# Idempotent: an existing managed block is replaced, other content is kept.
+claude_md="$HOME/.claude/CLAUDE.md"
+mkdir -p "$HOME/.claude"
+recv_dir="$HOME/Omasend"
+cfg="$HOME/.config/omasend/config.json"
+if [ -f "$cfg" ] && command -v jq >/dev/null 2>&1; then
+  d="$(jq -r '.receiveDir // empty' "$cfg" 2>/dev/null || true)"
+  [ -n "$d" ] && recv_dir="$d"
+fi
+if [ -f "$claude_md" ]; then
+  sed -i '/<!-- BEGIN omasend (managed by installer) -->/,/<!-- END omasend (managed by installer) -->/d' "$claude_md"
+fi
+cat >> "$claude_md" <<AGENTEOF
+
+<!-- BEGIN omasend (managed by installer) -->
+## Omasend (installed on this machine)
+
+Omasend is the LocalSend-compatible file-transfer plugin for
+omarchy-shell (Omarchy quattro). Other devices send files/messages to
+this box over LAN/Tailscale (TCP 53317). **Files sent here land in
+\`$recv_dir\`**; files still transferring carry a \`.part\` suffix —
+skip them. Receiving works whenever the desktop shell is running;
+incoming messages appear in the panel's Messages tab, not on disk.
+
+Agents/scripts can SEND from this box via shell IPC (no TTY):
+\`omarchy-shell omasend send "<alias>" "<text>"\` for a message, and
+\`omarchy-shell omasend sendFile "<alias>" "<absolute path>"\` for a
+file or folder (one path per call; folders send whole). Replies are
+"queued seq N" — delivery is async; a failure raises a desktop
+notification. \`omarchy-shell omasend status\` shows engine health.
+Panel UI: \`omarchy-shell shell toggle $PLUGIN_ID\`.
+<!-- END omasend (managed by installer) -->
+AGENTEOF
+say "Agent context written to $claude_md."
+
 say ""
 say "Done. The bar icon lives in the right section; toggle the panel with:"
 say "  omarchy-shell shell toggle $PLUGIN_ID"

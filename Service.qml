@@ -68,6 +68,17 @@ Item {
   property int _seq: 0
   property var ipcPending: ({})       // seqs of IPC-initiated sends awaiting a result
 
+  // Register an IPC-initiated send so its sendResult is reported (failures
+  // notify — see the sendResult handler) and return the IPC reply string.
+  function trackIpcSend(seq) {
+    if (seq <= 0) return "engine not connected"
+    var pend = {}
+    for (var k in root.ipcPending) pend[k] = true
+    pend[seq] = true
+    root.ipcPending = pend
+    return "queued seq " + seq
+  }
+
   // ---------------------------------------------------------------- engine
   // Connection strategy: try the socket first — an engine may already be
   // running (previous shell instance, or started by hand). Only spawn one
@@ -498,14 +509,16 @@ Item {
     // omarchy-shell omasend send '<alias>' '<text>'
     function send(to: string, text: string): string {
       var seq = root.sendMessage(to, "", text, "")
-      if (seq > 0) {
-        var pend = {}
-        for (var k in root.ipcPending) pend[k] = true
-        pend[seq] = true
-        root.ipcPending = pend
-        return "queued seq " + seq
-      }
-      return "engine not connected"
+      return root.trackIpcSend(seq)
+    }
+
+    // omarchy-shell omasend sendFile '<alias>' '<absolute path>'
+    // Files or folders (folders expand on the wire). One path per call.
+    function sendFile(to: string, path: string): string {
+      var p = String(path || "").trim()
+      if (p === "") return "usage: sendFile <alias> <absolute-path>"
+      var seq = root.sendFiles(to, "", [p], "")
+      return root.trackIpcSend(seq)
     }
   }
 }
