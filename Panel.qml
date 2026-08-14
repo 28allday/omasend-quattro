@@ -79,6 +79,10 @@ Item {
   property var pendingSend: null    // {kind:"message"|"files", to, ip, text, paths}
   property int awaitSeq: -1
 
+  // Paths staged by a summon payload ({"paths":[...]} — the Nautilus
+  // right-click route): pick a device and Enter sends them via the engine.
+  property var stagedPaths: []
+
   // ------------------------------------------------- self-reference (bar fix)
   // `omarchy plugin enable` writes only the bar.layout entry for a
   // bar-widget+panel plugin; if the bar icon is later removed the shell finds
@@ -111,8 +115,27 @@ Item {
     root.ensureSelfReference()
     root.selectedIndex = -1
     root.statusLine = ""
-    if (root.hasService && root.svc.offers.length > 0) root.tab = 0
+    var staged = []
+    try {
+      var p = JSON.parse(String(payloadJson || "{}"))
+      if (p && Array.isArray(p.paths))
+        staged = p.paths.filter(function(x) { return String(x).trim() !== "" })
+    } catch (e) {}
+    root.stagedPaths = staged
+    if (staged.length > 0) {
+      root.tab = 0
+      root.selectedIndex = root.peers.length > 0 ? 0 : -1
+    } else if (root.hasService && root.svc.offers.length > 0) {
+      root.tab = 0
+    }
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function sendStaged(peer) {
+    if (!root.hasService || root.stagedPaths.length === 0 || !peer) return
+    root.pendingSend = { kind: "files", to: peer.alias, ip: peer.ip, paths: root.stagedPaths.slice() }
+    root.awaitSeq = root.svc.sendFiles("", peer.ip, root.stagedPaths, "")
+    root.statusLine = "Sending " + root.stagedPaths.length + " item(s) to " + peer.alias + "…"
   }
 
   function close() {
@@ -262,6 +285,8 @@ Item {
       if (!r || r.seq !== root.awaitSeq) return
       if (r.ok) {
         root.statusLine = "Sent to " + (r.to || (root.pendingSend ? root.pendingSend.to : "peer"))
+        if (root.pendingSend && root.pendingSend.kind === "files")
+          root.stagedPaths = []
         root.pendingSend = null
         root.awaitSeq = -1
       } else if (r.pinRequired) {
@@ -335,7 +360,12 @@ Item {
           } else if (root.tab === 0) {
             var peer = (root.selectedIndex >= 0 && root.selectedIndex < root.peers.length)
                        ? root.peers[root.selectedIndex] : null
-            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                && peer && root.stagedPaths.length > 0) {
+              root.sendStaged(peer); event.accepted = true
+            } else if (event.key === Qt.Key_X && root.stagedPaths.length > 0) {
+              root.stagedPaths = []; root.statusLine = ""; event.accepted = true
+            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter
                  || event.key === Qt.Key_M) && peer) {
               root.openModal("message", peer); event.accepted = true
             } else if (event.key === Qt.Key_F && peer) {
@@ -461,6 +491,62 @@ Item {
           }
         }
 
+        // ---------------------------------------------------------- staged
+        // Files handed in by a summon payload (Nautilus right-click): shown
+        // until they're sent to the picked device or cleared.
+        Rectangle {
+          visible: root.stagedPaths.length > 0
+          width: parent.width
+          height: visible ? stagedRow.implicitHeight + Style.spacing.lg * 2 : 0
+          radius: root.cornerRadius / 2
+          color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.12)
+          border.color: root.accent
+          border.width: 1
+
+          Item {
+            id: stagedRow
+            anchors.fill: parent
+            anchors.margins: Style.spacing.lg
+            implicitHeight: Math.max(stagedText.implicitHeight, stagedClear.implicitHeight)
+
+            Column {
+              id: stagedText
+              anchors.left: parent.left
+              anchors.right: stagedClear.left
+              anchors.rightMargin: Style.spacing.md
+              anchors.verticalCenter: parent.verticalCenter
+
+              Text {
+                width: parent.width
+                text: "Send " + root.stagedPaths.length + " item(s) — pick a device, press Enter"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+              }
+              Text {
+                width: parent.width
+                text: root.stagedPaths.map(function(p) {
+                  var s = String(p); var i = s.lastIndexOf("/")
+                  return i >= 0 ? s.substring(i + 1) : s
+                }).join(", ")
+                color: Qt.darker(root.foreground, 1.3)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideMiddle
+              }
+            }
+
+            Button {
+              id: stagedClear
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Clear (x)"
+              onClicked: { root.stagedPaths = []; root.statusLine = "" }
+            }
+          }
+        }
+
         // ------------------------------------------------------------ tabs
         Row {
           width: parent.width
@@ -508,7 +594,10 @@ Item {
               MouseArea {
                 anchors.fill: parent
                 onClicked: root.selectedIndex = index
-                onDoubleClicked: root.openModal("message", modelData)
+                onDoubleClicked: {
+                  if (root.stagedPaths.length > 0) root.sendStaged(modelData)
+                  else root.openModal("message", modelData)
+                }
               }
 
               Text {
@@ -874,7 +963,9 @@ Item {
         text: {
           if (root.modalMode !== "") return "enter send · esc cancel"
           switch (root.tab) {
-            case 0: return "↑↓ move · enter/m message · f file · + add remote · 1-4 tabs · esc close"
+            case 0: return root.stagedPaths.length > 0
+                    ? "↑↓ pick device · enter send staged · x clear · 1-4 tabs · esc close"
+                    : "↑↓ move · enter/m message · f file · + add remote · 1-4 tabs · esc close"
             case 1: return "1-4 tabs · esc close"
             case 2: return "c clear finished · 1-4 tabs · esc close"
             default: return "edits save on enter · 1-4 tabs · esc close"
