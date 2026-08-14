@@ -350,7 +350,17 @@ Item {
     return files.length + " files"
   }
 
+  // True while our panel is on screen (host-tracked open flag).
+  function panelOpen() {
+    return root.shell && root.shell.openPanelIds
+        && root.shell.openPanelIds[root.pluginId] === true
+  }
+
   function notify(summary, body) {
+    // The panel anchors top-right — the same corner notifications pop in —
+    // so a toast would sit exactly over the offer strip's Accept/Decline.
+    // While the panel is open it IS the UI; stay quiet.
+    if (root.panelOpen()) return
     Quickshell.execDetached(["notify-send", "-a", "Omasend", summary, body])
   }
 
