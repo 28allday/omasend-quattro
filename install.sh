@@ -149,19 +149,24 @@ cat >> "$claude_md" <<AGENTEOF
 ## Omasend (installed on this machine)
 
 Omasend is the LocalSend-compatible file-transfer plugin for
-omarchy-shell (Omarchy quattro). Other devices send files/messages to
-this box over LAN/Tailscale (TCP 53317). **Files sent here land in
-\`$recv_dir\`**; files still transferring carry a \`.part\` suffix —
-skip them. Receiving works whenever the desktop shell is running;
-incoming messages appear in the panel's Messages tab, not on disk.
+omarchy-shell (Omarchy 4). It is the successor to the omarchy-send
+TUI — if that is also installed here, never run it while the shell is
+up: only one process can bind port 53317, and Omasend's engine
+(\`~/.local/bin/omasend-engine\`, auto-managed by the shell) is the
+receiver. Other devices send files/messages to this box over
+LAN/Tailscale (TCP 53317). **Files sent here land in \`$recv_dir\`**;
+files still transferring carry a \`.part\` suffix — skip them.
+Receiving works whenever the desktop shell is running; incoming
+messages appear in the panel's Messages tab, not on disk.
 
 Agents/scripts can SEND from this box via shell IPC (no TTY):
 \`omarchy-shell omasend send "<alias>" "<text>"\` for a message, and
 \`omarchy-shell omasend sendFile "<alias>" "<absolute path>"\` for a
-file or folder (one path per call; folders send whole). Replies are
-"queued seq N" — delivery is async; a failure raises a desktop
-notification. \`omarchy-shell omasend status\` shows engine health.
-Panel UI: \`omarchy-shell shell toggle $PLUGIN_ID\`.
+file or folder (one path per call; folders send whole). **"OSF" is
+user shorthand** — "OSF <file> to <alias>" means run that sendFile
+IPC. Replies are "queued seq N" — delivery is async; a failure raises
+a desktop notification. \`omarchy-shell omasend status\` shows engine
+health. Panel UI: \`omarchy-shell shell toggle $PLUGIN_ID\`.
 <!-- END omasend (managed by installer) -->
 AGENTEOF
 say "Agent context written to $claude_md."
