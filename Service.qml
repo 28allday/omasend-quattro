@@ -1,0 +1,307 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+
+// Omasend service plugin for omarchy-shell.
+//
+// Owns the connection to omasend-engine — the headless LocalSend engine
+// (discovery + receiver + sender, a Go daemon) — over a unix socket speaking
+// JSON Lines. The engine receives files and messages for as long as the shell
+// is running; this service holds the live state (peers, transfers, messages,
+// pending offers, settings) that Panel.qml and BarWidget.qml render, raises
+// desktop notifications for incoming traffic, and relays actions back.
+//
+// The engine is spawned here if nothing is already listening on the socket,
+// and respawned with a short backoff if it dies. `engineMissing` turns true
+// when the binary can't be found so the panel can say how to install it.
+Item {
+  id: root
+
+  // ---- injected by shell.qml (_syncServices/ensureService) ----
+  property var shell: null
+  property var manifest: null
+  property var pluginRegistry: null
+
+  readonly property string pluginId: "nosignal.omasend"
+  readonly property string home: Quickshell.env("HOME")
+
+  // Engine binary + socket. The install script drops the engine in
+  // ~/.local/bin; a PATH copy also works via the `sh -c` spawn below.
+  readonly property string engineBin: home + "/.local/bin/omasend-engine"
+  readonly property string socketPath: {
+    var rt = Quickshell.env("XDG_RUNTIME_DIR")
+    return rt && rt !== "" ? rt + "/omasend.sock" : "/tmp/omasend.sock"
+  }
+
+  // ------------------------------------------------------------------ state
+  property bool connected: false
+  property bool engineMissing: false
+  property bool engineSpawned: false
+
+  // Identity + settings (from ready/status events).
+  property string alias: ""
+  property string fingerprint: ""
+  property int port: 0
+  property string receiveDir: ""
+  property bool autoAccept: false
+  property bool pinSet: false
+
+  // Live collections. Arrays are replaced wholesale (never mutated in place)
+  // so QML bindings see the change.
+  property var peers: []       // [{alias, ip, model, type, fingerprint, lastSeen}]
+  property var messages: []    // [{from, to, text, time, outgoing}]
+  property var offers: []      // [{offerId, from, ip, total, files:[{name,size}]}]
+  property var transfers: []   // [{id, dir, kind, file, received, total, error}]
+
+  property int unreadMessages: 0
+  readonly property int activeTransfers: {
+    var n = 0
+    for (var i = 0; i < transfers.length; i++) {
+      var k = transfers[i].kind
+      if (k === "start" || k === "progress") n++
+    }
+    return n
+  }
+
+  // Send results keyed by seq, for the panel to react to (PIN prompt, errors).
+  property var lastSendResult: null   // {seq, ok, error, pinRequired, to}
+  property int _seq: 0
+
+  // ---------------------------------------------------------------- engine
+  // Connection strategy: try the socket first — an engine may already be
+  // running (previous shell instance, or started by hand). Only spawn one
+  // after a connect attempt fails with nothing listening.
+  //
+  // Socket quirks (verified against quickshell's socket.cpp): a FAILED
+  // connect attempt emits only error() — connectionStateChanged never fires —
+  // and the instance wedges permanently (its internal QLocalSocket is only
+  // torn down on a clean disconnect). So retries recreate the Socket through
+  // a Loader, and the retry path is driven from onError.
+  Loader {
+    id: sockLoader
+    active: false
+    sourceComponent: Socket {
+      path: root.socketPath
+      parser: SplitParser {
+        onRead: function(line) { root.handleLine(line) }
+      }
+      onConnectionStateChanged: {
+        root.connected = connected
+        if (!connected) root.scheduleReconnect()   // established, then dropped
+      }
+      onError: function(err) { root.scheduleReconnect() }  // attempt failed
+    }
+    onLoaded: item.connected = true
+  }
+
+  function attemptConnect() {
+    sockLoader.active = false   // discard any wedged instance
+    sockLoader.active = true
+  }
+
+  function scheduleReconnect() {
+    root.connected = false
+    // Nothing listening: (re)start the engine unless it's mid-start or the
+    // binary is known missing. A lost race with an external engine is fine —
+    // ours exits "already running" and the next connect succeeds.
+    if (!engineProc.running && !root.engineMissing) {
+      root.engineSpawned = true
+      engineProc.running = true
+    }
+    if (!reconnect.running) reconnect.start()
+  }
+
+  Timer {
+    id: reconnect
+    interval: 1500
+    repeat: false
+    onTriggered: root.attemptConnect()
+  }
+
+  Process {
+    id: engineProc
+    // sh -c so a PATH install works when ~/.local/bin/omasend-engine is
+    // absent; exec keeps the engine as the process we track.
+    command: ["sh", "-c",
+      'if [ -x "$1" ]; then exec "$1"; else exec omasend-engine; fi',
+      "omasend-engine-launch", root.engineBin]
+    onExited: function(code) {
+      // 127 = neither binary found. Anything else: crashed or lost a race
+      // with an already-running engine; either way just try the socket again.
+      if (code === 127) root.engineMissing = true
+      if (!reconnect.running) reconnect.start()
+    }
+  }
+
+  Component.onCompleted: attemptConnect()
+
+  // ---------------------------------------------------------------- wire
+  function request(obj) {
+    var s = sockLoader.item
+    if (!s || !s.connected) return false
+    s.write(JSON.stringify(obj) + "\n")
+    s.flush()
+    return true
+  }
+
+  function handleLine(line) {
+    var t = String(line || "").trim()
+    if (t === "") return
+    var ev
+    try { ev = JSON.parse(t) } catch (e) {
+      console.warn("omasend: bad event line:", t.substring(0, 120))
+      return
+    }
+    switch (ev.event) {
+      case "ready":
+      case "status":
+        root.alias = ev.alias || ""
+        root.fingerprint = ev.fingerprint || ""
+        root.port = ev.port || 0
+        root.receiveDir = ev.receiveDir || ""
+        root.autoAccept = ev.autoAccept === true
+        root.pinSet = ev.pinSet === true
+        if (ev.event === "ready") {
+          root.engineMissing = false
+          root.offers = []          // engine restarted: parked offers are gone
+        }
+        break
+      case "peers":
+        root.peers = ev.peers || []
+        break
+      case "messages":
+        root.messages = ev.messages || []
+        break
+      case "message":
+        root.messages = root.messages.concat([{
+          from: ev.from || "", to: ev.to || "", text: ev.text || "",
+          time: ev.time || "", outgoing: ev.outgoing === true
+        }])
+        if (ev.outgoing !== true) {
+          root.unreadMessages++
+          root.notify("Message from " + (ev.from || "someone"), ev.text || "")
+        }
+        break
+      case "offer":
+        root.offers = root.offers.concat([{
+          offerId: ev.offerId, from: ev.from || "", ip: ev.ip || "",
+          total: ev.total || 0, files: ev.files || []
+        }])
+        root.notify((ev.from || "Someone") + " wants to send files",
+                    root.offerBody(ev.files || []))
+        break
+      case "offerDone":
+        root.offers = root.offers.filter(function(o) { return o.offerId !== ev.offerId })
+        break
+      case "transfer":
+        root.applyTransfer(ev)
+        break
+      case "sendResult":
+        root.lastSendResult = {
+          seq: ev.seq, ok: ev.ok === true, error: ev.error || "",
+          pinRequired: ev.pinRequired === true, to: ev.to || ""
+        }
+        break
+    }
+  }
+
+  // Upsert by transfer ID; completed rows stay listed (the panel prunes).
+  function applyTransfer(ev) {
+    var next = root.transfers.slice()
+    var found = false
+    for (var i = 0; i < next.length; i++) {
+      if (next[i].id === ev.id) {
+        next[i] = {
+          id: ev.id, dir: ev.dir, kind: ev.kind, file: ev.file || next[i].file,
+          received: ev.received || 0, total: ev.total || next[i].total,
+          error: ev.error || ""
+        }
+        found = true
+        break
+      }
+    }
+    if (!found) next.push({
+      id: ev.id, dir: ev.dir, kind: ev.kind, file: ev.file || "",
+      received: ev.received || 0, total: ev.total || 0, error: ev.error || ""
+    })
+    root.transfers = next
+    if (ev.dir === "in" && ev.kind === "filedone")
+      root.notify("Received " + (ev.file || "a file"), "Saved to " + root.receiveDir)
+  }
+
+  function offerBody(files) {
+    if (files.length === 1) return files[0].name
+    return files.length + " files"
+  }
+
+  function notify(summary, body) {
+    Quickshell.execDetached(["notify-send", "-a", "Omasend", summary, body])
+  }
+
+  // ---------------------------------------------------------------- actions
+  // All return the request's seq (or -1 when not connected) so callers can
+  // match the sendResult event.
+  function sendMessage(to, ip, text, pin) {
+    root._seq++
+    var ok = root.request({ req: "send", seq: root._seq, to: to || "", ip: ip || "",
+                            message: text, pin: pin || "" })
+    return ok ? root._seq : -1
+  }
+
+  function sendFiles(to, ip, paths, pin) {
+    root._seq++
+    var ok = root.request({ req: "send", seq: root._seq, to: to || "", ip: ip || "",
+                            paths: paths, pin: pin || "" })
+    return ok ? root._seq : -1
+  }
+
+  function acceptOffer(offerId, accept) {
+    root.request({ req: "accept", offerId: offerId, accept: accept === true })
+  }
+
+  function applySettings(obj) {
+    var req = { req: "set" }
+    if (obj.alias !== undefined) req.alias = String(obj.alias)
+    if (obj.pin !== undefined) req.setPin = String(obj.pin)
+    if (obj.receiveDir !== undefined) req.receiveDir = String(obj.receiveDir)
+    if (obj.autoAccept !== undefined) req.autoAccept = obj.autoAccept === true
+    root.request(req)
+  }
+
+  function addPeer(host) {
+    root.request({ req: "addPeer", host: String(host || "") })
+  }
+
+  function clearUnread() { root.unreadMessages = 0 }
+
+  // Drop finished/errored rows, keeping live ones.
+  function pruneTransfers() {
+    root.transfers = root.transfers.filter(function(tr) {
+      return tr.kind === "start" || tr.kind === "progress"
+    })
+  }
+
+  // ---------------------------------------------------------------- IPC
+  IpcHandler {
+    target: "omasend"
+
+    function ping(): string { return root.connected ? "ok" : "engine not connected" }
+
+    function status(): string {
+      return JSON.stringify({
+        connected: root.connected,
+        engineMissing: root.engineMissing,
+        alias: root.alias,
+        peers: root.peers.length,
+        unreadMessages: root.unreadMessages,
+        activeTransfers: root.activeTransfers
+      })
+    }
+
+    // omarchy-shell ipc call omasend send '<alias>' '<text>'
+    function send(to: string, text: string): string {
+      var seq = root.sendMessage(to, "", text, "")
+      return seq > 0 ? "queued seq " + seq : "engine not connected"
+    }
+  }
+}

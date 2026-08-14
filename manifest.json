@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "nosignal.omasend",
+  "name": "Omasend",
+  "version": "0.1.0",
+  "author": "Gavin Nugent",
+  "license": "MIT",
+  "description": "LocalSend-compatible file transfer and messaging, native to the shell: discover devices on the LAN or tailnet, send files and messages, and receive them whenever the shell is running — no app open required. Summon with: omarchy-shell shell toggle nosignal.omasend",
+  "kinds": [
+    "service",
+    "panel",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "panel": "Panel.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omasend",
+    "description": "Bar icon that toggles the Omasend panel; badges on unread messages and active transfers",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

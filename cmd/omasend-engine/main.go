@@ -354,7 +354,9 @@ func (e *engine) holdOffer(ctx context.Context, req server.AcceptRequest) {
 	})
 
 	go func() {
-		t := time.NewTimer(2 * time.Minute)
+		// Must undercut the server's own 60s accept wait: past that the
+		// transfer is already declined and an accept would go nowhere.
+		t := time.NewTimer(55 * time.Second)
 		defer t.Stop()
 		select {
 		case <-ctx.Done():
