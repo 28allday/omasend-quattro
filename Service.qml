@@ -205,8 +205,14 @@ Item {
     }
   }
 
-  // Upsert by transfer ID; completed rows stay listed (the panel prunes).
+  // Upsert by transfer ID. Terminal rows are stamped so the sweep below can
+  // age them out; errors stay until cleared from the panel.
+  function isTerminalKind(kind) {
+    return kind === "filedone" || kind === "cancel" || kind === "error"
+  }
+
   function applyTransfer(ev) {
+    var doneAt = root.isTerminalKind(ev.kind) ? Date.now() : 0
     var next = root.transfers.slice()
     var found = false
     for (var i = 0; i < next.length; i++) {
@@ -214,7 +220,7 @@ Item {
         next[i] = {
           id: ev.id, dir: ev.dir, kind: ev.kind, file: ev.file || next[i].file,
           received: ev.received || 0, total: ev.total || next[i].total,
-          error: ev.error || ""
+          error: ev.error || "", doneAt: doneAt
         }
         found = true
         break
@@ -222,11 +228,31 @@ Item {
     }
     if (!found) next.push({
       id: ev.id, dir: ev.dir, kind: ev.kind, file: ev.file || "",
-      received: ev.received || 0, total: ev.total || 0, error: ev.error || ""
+      received: ev.received || 0, total: ev.total || 0, error: ev.error || "",
+      doneAt: doneAt
     })
     root.transfers = next
     if (ev.dir === "in" && ev.kind === "filedone")
       root.notify("Received " + (ev.file || "a file"), "Saved to " + root.receiveDir)
+  }
+
+  // Completed and cancelled rows clear themselves shortly after finishing;
+  // failed rows are kept so the error stays visible until cleared by hand.
+  readonly property int doneLingerMs: 8000
+
+  Timer {
+    interval: 2000
+    repeat: true
+    running: root.transfers.length > 0
+    onTriggered: {
+      var now = Date.now()
+      var keep = root.transfers.filter(function(tr) {
+        if (tr.kind === "filedone" || tr.kind === "cancel")
+          return tr.doneAt > 0 && (now - tr.doneAt) < root.doneLingerMs
+        return true
+      })
+      if (keep.length !== root.transfers.length) root.transfers = keep
+    }
   }
 
   function offerBody(files) {
@@ -294,7 +320,8 @@ Item {
         alias: root.alias,
         peers: root.peers.length,
         unreadMessages: root.unreadMessages,
-        activeTransfers: root.activeTransfers
+        activeTransfers: root.activeTransfers,
+        listedTransfers: root.transfers.length
       })
     }
 
