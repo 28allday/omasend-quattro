@@ -251,7 +251,7 @@ Item {
       case "message": return "Type a message…"
       case "files": return "~/path/to/file-or-folder"
       case "pin": return "PIN"
-      case "addpeer": return "e.g. durden or 100.64.0.7"
+      case "addpeer": return "e.g. mybox or 100.64.0.7"
       default: return ""
     }
   }
