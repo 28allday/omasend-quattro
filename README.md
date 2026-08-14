@@ -1,302 +1,188 @@
-# Omarchy-Send (`omarchy-send`)
+# Omasend
 
-A [LocalSend](https://localsend.org)-compatible file-transfer client with a
-**terminal UI**, built for headless Arch / Omarchy servers used over SSH — no
-desktop environment, no clipboard, no browser. It interoperates with the stock
-LocalSend mobile and desktop apps on the same LAN, including their default
-**encrypted (HTTPS)** mode.
+Send and receive files and messages between your Omarchy desktop and anything
+running [LocalSend](https://localsend.org) — phones, laptops, other Linux
+boxes — without opening an app. Omasend is a **native plugin for the Omarchy 4
+desktop shell** (`omarchy-shell`): a paper-plane icon in the bar, a panel for
+devices, messages and transfers, and an always-on receiver that runs quietly
+with the shell.
 
-## Features
+It speaks the LocalSend v2.1 protocol, including the default encrypted (HTTPS)
+mode, so stock LocalSend apps see it as just another device.
 
-- **Discovery** — multicast announce/listen on `224.0.0.167:53317` plus the HTTP
-  `/register` handshake, with peer aging.
-- **Remote devices** — reach boxes that aren't on your LAN (multicast can't find
-  them) by probing them directly over unicast. If [Tailscale](https://tailscale.com)
-  is running, online tailnet peers are discovered automatically; you can also add
-  a device by host/IP/name with the `+` key, saved for next time.
-- **Receive** — incoming files are accepted via a prompt (or auto-accepted) and
-  written to the receive directory, with live progress.
-- **Send** — pick a peer, then find what to send with a built-in **recursive
-  fuzzy finder**: type part of a name to match files (and folders) anywhere under
-  your home directory, stage them, and upload with progress, rate and ETA.
-  Folders are sent recursively with their structure preserved on the receiver.
-- **Right-click in Nautilus** (Omarchy desktop) — "Send via Omarchy-Send" on any
-  file or folder opens the picker in a floating terminal with your selection
-  already staged; just pick a device. Installed only where Nautilus is present.
-- **Messages** — send a plain-text message to a peer (LocalSend-compatible) and
-  read messages others send you in a dedicated Messages tab. Send the system
-  clipboard as a message, or copy a received one back to the clipboard (uses
-  `wl-clipboard`/`xclip`/`xsel`, or tmux's paste buffer when run inside tmux on
-  a headless box).
-- **Desktop notifications** — on a graphical session (e.g. Omarchy/Hyprland with
-  `mako`), an incoming message or file offer raises a desktop notification via
-  `notify-send`, so a backgrounded receiver still gets your attention. Best-effort
-  and self-disabling on headless boxes; turn it off with `--no-notify` or the `n`
-  key in Settings.
-- **Manage** — browse the receive folder, mark received files (or whole folders)
-  and delete the ones you no longer want, behind a confirmation prompt.
-- **HTTPS** — generates a self-signed certificate whose fingerprint matches the
-  scheme the official client pins (uppercase-hex SHA-256 of the cert DER), so
-  stock encrypted peers talk to it with no configuration.
-- **Single static binary**, pure-stdlib protocol layer; the only external
-  dependencies are the Charm TUI libraries and `sahilm/fuzzy` (the send finder's
-  matcher) — both compiled in, so headless boxes need nothing extra.
+<p align="center">
+  <img src="docs/devices.png" width="32%" alt="Devices tab">
+  <img src="docs/staged.png" width="32%" alt="Files staged for sending">
+  <img src="docs/offer.png" width="32%" alt="Incoming file offer">
+</p>
 
-## Install
+## Quick start
 
-One line, nothing to clone:
+On an Omarchy 4 desktop, paste this into a terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/28allday/omarchy-send/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/28allday/omasend-quattro/main/install.sh | bash
 ```
 
-This downloads the right binary for your architecture into `~/.local/bin`, and on
-Omarchy also adds a floating Walker entry (search **Omarchy-Send**) and the
-Nautilus right-click integration. Override the location with `BIN_DIR=/usr/local/bin`,
-or pin a version with `OMARCHY_SEND_VERSION=v0.1.0`.
+That's the whole install. When it finishes you'll have a paper-plane icon in
+the bar — click it and the panel opens on the Devices tab.
 
-The installer also drops an **agent context file** so any AI agent on the machine
-(Claude, etc.) knows what omarchy-send is and where received files land: a canonical
-`~/.config/omarchy-send/AGENTS.md` (with a `CLAUDE.md` symlink) plus a short,
-idempotently-managed section appended to `~/.claude/CLAUDE.md`.
+Then, on the devices you want to talk to:
 
-**Local or remote?** When run interactively the installer asks whether this is a
-**local** machine (home/LAN) or a **remote server** (public IP). Local installs as
-above. For a remote server it additionally locks port `53317` to the Tailscale
-interface in the firewall (`ufw`), so the box is reachable over your tailnet only —
-not the open internet. Non-interactive installs (e.g. piped `curl | bash`) default
-to local; force a choice with `OMARCHY_SEND_MODE=local` or `OMARCHY_SEND_MODE=remote`.
+- **Phone or tablet** — install the free [LocalSend app](https://localsend.org)
+  (iOS / Android). On the same Wi-Fi, it and your desktop find each other
+  automatically.
+- **Another desktop or laptop** — the official LocalSend app, or Omasend on
+  another Omarchy 4 box.
+- **A headless server** — the
+  [omarchy-send](https://github.com/28allday/omarchy-send) terminal client.
 
-If you install in local mode but the box has a **public IP**, the installer detects
-it and prints a warning with the exact commands to lock the port down — it never
-changes your firewall without remote mode. See
-[Public-IP boxes](#public-ip-boxes-firewall-the-port) below.
+Send something from the other device and it appears as an offer in the panel;
+accept it and it lands in `~/Omasend`. That's it.
 
-> The installer is a short shell script fetched over HTTPS; read it first if you
-> prefer — it lives at [`install.sh`](install.sh) in this repo.
+## Highlights
 
-## Build from source
+- **Always receiving** — if the desktop is running, the box can receive. Files
+  land in `~/Omasend`, and a desktop notification tells you when they arrive.
+- **Bar icon** — a paper plane in the bar; it badges on unread messages and
+  active transfers, and a click opens the panel.
+- **Send anything** — pick a device and press `f` for files or `Shift+F` for a
+  whole folder (sent recursively, structure preserved), or right-click files
+  in Nautilus → **Send via Omasend** to open the panel with your selection
+  already staged.
+- **Messages** — LocalSend-compatible plain-text messages in both directions:
+  compose from a device row, read in the Messages tab.
+- **You stay in control** — incoming offers show an accept/decline strip
+  (auto-accept is optional), and an optional PIN gates who can send to you.
+- **Finds devices anywhere** — multicast discovery on the LAN, automatic
+  [Tailscale](https://tailscale.com) peers, and manual add-by-host/IP for
+  everything else.
+- **Scriptable** — send files or messages from scripts and AI agents through
+  the shell's IPC, no UI involved.
+
+## Requirements
+
+Omarchy 4 with `omarchy-shell` — the UI is a shell plugin. On a headless or
+pre-quattro box the panel can't run; use the original
+[omarchy-send](https://github.com/28allday/omarchy-send) terminal client
+there instead. Both speak the same protocol and happily talk to each other.
+
+## Install details
+
+The one-liner from Quick start installs the transfer engine
+(`omasend-engine`, a single static binary in `~/.local/bin`), registers and
+enables the shell plugin, and adds the icon and the Nautilus right-click
+entry. It's safe to run again; `omarchy plugin update` keeps the plugin
+itself up to date.
+
+Prefer to build from source? Clone the repo and run the same script — with Go
+installed it builds the engine locally instead of downloading it:
 
 ```sh
-git clone https://github.com/28allday/omarchy-send
-cd omarchy-send
-go build -o omarchy-send ./cmd/omarchy-send   # or: ./install.sh
+git clone https://github.com/28allday/omasend-quattro.git
+cd omasend-quattro && bash install.sh
 ```
 
-Run from a clone, `./install.sh` builds with your local Go toolchain instead of
-downloading.
+Overrides: `BIN_DIR=…` puts the engine somewhere else, `OMASEND_VERSION=v0.1.0`
+pins a release, `OMASEND_REPO=user/repo` installs from a fork.
 
-## Usage
+**Coming from omarchy-send?** Your identity survives: the first run migrates
+`~/.config/omarchy-send/config.json` — alias, PIN, receive folder and the TLS
+certificate — so devices that already paired with you stay paired. The old TUI
+and Omasend can't run at the same time on one machine (both need port 53317).
+
+## Using it
+
+Click the paper plane in the bar, or from a terminal:
 
 ```sh
-omarchy-send                      # uses config / sensible defaults
-omarchy-send --alias my-server    # override the advertised device name
-omarchy-send --port 53317         # override the listen port
-omarchy-send --dir ~/Downloads    # override the receive directory
-omarchy-send --auto-accept        # accept incoming transfers without a prompt
-omarchy-send --pin 2468           # require senders to supply this PIN
-omarchy-send --no-icons           # drop Nerd Font glyphs (non-Nerd-Font terminals)
-omarchy-send --no-notify          # don't raise desktop notifications on incoming
+omarchy-shell shell toggle nosignal.omasend
 ```
 
-### Headless send (no TUI)
+The panel is fully keyboard-driven:
 
-Send a one-off message, files, or folders to a peer by name, with no terminal
-UI — handy from scripts, cron, AI agents, or an SSH session with no TTY:
+| Key | Action |
+| --- | --- |
+| `↑` `↓` / `j` `k` | Move through the list |
+| `Enter` / `m` | Message the selected device (sends staged items instead, if any are staged) |
+| `f` / `Shift+F` | Pick files / a folder to send to the selected device |
+| `+` | Add a remote device by host or IP |
+| `a` / `d` | Accept / decline an incoming offer |
+| `x` | Clear staged items |
+| `1`–`4` / `Tab` | Switch tabs |
+| `Esc` / `q` | Close the panel |
+
+Every row also works with the mouse — the icons on a device row send a
+message, files, or a folder directly.
+
+### Receiving
+
+Anything sent to you lands in `~/Omasend`. Files still on their way carry a
+`.part` suffix until they're complete. With auto-accept off (the default),
+each incoming batch shows an offer strip at the top of the panel — accept or
+decline it; unattended offers simply expire. Flip **Auto-accept** in Settings
+if you'd rather everything just arrives.
+
+Set a **PIN** in Settings and senders must enter it before anything reaches
+you — the same PIN mechanism the official LocalSend apps use.
+
+### Messages
+
+Incoming messages raise a notification and badge the bar icon; the Messages
+tab keeps the recent conversation (messages live in the panel, not on disk).
+Press `Enter` on a device to reply.
+
+### Transfers
+
+The Transfers tab shows live progress for everything moving in either
+direction. Dismiss finished rows individually, or press `c` to clear all
+finished transfers.
+
+### Right-click in Nautilus
+
+Select files or folders in Nautilus, right-click → **Send via Omasend**. The
+panel opens with your selection staged — pick a device, press `Enter`, done.
+
+### Remote devices
+
+Multicast discovery only reaches your own LAN. For everything else: online
+Tailscale peers are discovered automatically when Tailscale is running, and
+`+` adds any device by host or IP, remembered for next time.
+
+### From scripts and agents
+
+The shell exposes Omasend over IPC, so anything on the box can send without a
+UI or a TTY:
 
 ```sh
-omarchy-send --to "Strong Onion" --message "hello"
-omarchy-send --to "Strong Onion" --message "deploy finished" --wait 20s
-omarchy-send --to "Strong Onion" --message "hi" --send-pin 2468   # if the peer requires a PIN
-omarchy-send --to "Strong Onion" report.pdf photos/               # files and folders
-omarchy-send --to "Strong Onion" --message "build log attached" build.log
+omarchy-shell omasend send "phone" "on my way"          # message
+omarchy-shell omasend sendFile "phone" "/path/to/file"  # file or folder
+omarchy-shell omasend status                            # engine health
 ```
 
-The target is matched against the peer's display name, case-insensitively. The
-command discovers the peer over multicast and, like the TUI, directly probes
-your known peers and online Tailscale peers (waiting up to `--wait`, default
-15s) — so a remote box added with `+` in the TUI, or any tailnet peer, is a
-valid `--to` target from a script too. It sends the message and/or files,
-prints a result line per file, and exits non-zero if the peer isn't found or
-the send fails. It starts discovery only — not the receiver — so it's safe to
-run while another `omarchy-send` instance is up.
+Sends are queued and delivered asynchronously; a failure raises a desktop
+notification. The installer also writes a managed block into
+`~/.claude/CLAUDE.md` so AI agents on the machine know how to use it.
 
-`--to` requires a `--message`, file/folder paths, or both (flags must come
-before the paths). A folder is sent whole and its structure recreated on the
-receiver. Paths *without* `--to` instead open the TUI with them pre-staged
-(quick-send) — that form needs a TTY.
+## Under the hood
 
-### Sending files
+Two parts: a pure-QML shell plugin (bar widget, panel, service) and
+`omasend-engine`, a small Go daemon that speaks the LocalSend protocol —
+discovery, HTTPS transfers, PIN, the lot. The shell starts and supervises the
+engine and talks to it over a local socket; nothing listens beyond LocalSend's
+standard port `53317` (TCP + UDP). Configuration lives in
+`~/.config/omasend/config.json`. If you run a firewall, allow `53317` for both
+TCP and UDP on your LAN.
 
-Select a device on the **Devices** tab and press `enter` to open the send
-finder. It indexes files and folders under your home directory and fuzzy-matches
-as you type, so you can jump straight to what you want instead of browsing
-folder by folder:
-
-- type to filter · `↑`/`↓` move · `enter` stage the highlighted file **or folder**
-- `ctrl+d` show folders only (to send a whole directory) · `ctrl+s` send · `ctrl+u`
-  move the search root up a level · `esc` back
-
-Staging a folder sends it whole (its structure is recreated on the receiver).
-Matching is case-insensitive, and noisy directories (`.git`, `node_modules`,
-caches, dotfiles…) are skipped to keep the index fast.
-
-### Remote devices (over Tailscale)
-
-Multicast discovery only finds peers on the same LAN. To send to / receive from a
-box elsewhere, omarchy-send probes it directly over unicast — which works over
-anything routable, [Tailscale](https://tailscale.com) being the easy, secure choice
-(stable addresses, end-to-end encryption, no port-forwarding):
-
-1. `tailscale up` on both devices (one-time).
-2. Either let omarchy-send **auto-discover** online tailnet peers (it probes them
-   every few seconds; any running omarchy-send/LocalSend appears in Devices), or
-   press **`+`** on the Devices tab and enter a host, IP, or Tailscale name (e.g.
-   `colossus`). Added devices are saved to `knownPeers` in the config and re-probed
-   on every launch.
-
-The receiver already listens on all interfaces, so it's reachable at its Tailscale
-IP with nothing else to configure. Sending and receiving both work, because the
-probe is a two-way handshake (each side learns the other).
-
-#### Containers / userspace-networking tailscaled
-
-When tailscaled runs with `--tun=userspace-networking` (typical in unprivileged
-containers — no TUN device), processes cannot dial tailnet addresses directly;
-outbound tailnet traffic only works through tailscaled's built-in SOCKS5 proxy.
-omarchy-send handles this automatically: when the box has no tailnet address on
-a local interface but a proxy answers at `localhost:1055`, connections to
-`100.64.0.0/10` destinations are routed through it — LAN traffic is never
-proxied, and explicit `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` variables override
-the auto-detection. The one thing the box must provide is the proxy itself:
+## Uninstall
 
 ```sh
-tailscaled --tun=userspace-networking --socks5-server=localhost:1055 …
+omarchy plugin remove nosignal.omasend
+rm ~/.local/bin/omasend-engine
+rm ~/.local/share/nautilus-python/extensions/omasend.py
 ```
-
-The installer detects this situation and **offers to apply the fix** ([y/N]):
-it adds the flag to the launcher script that starts tailscaled (a container
-entrypoint, say) and restarts the daemon — or, when it lacks the rights to
-restart it, patches the launcher and tells you to restart the container/box.
-Non-interactive installs never touch the daemon; pre-answer with
-`OMARCHY_SEND_FIX_TAILSCALE=yes` (or `no`) to skip the prompt.
-
-Note that inbound connections on such boxes appear to come from `127.0.0.1`
-(tailscaled re-dials loopback); omarchy-send keeps a peer's routable address
-rather than letting those registers overwrite it.
-
-#### Public-IP boxes: firewall the port
-
-The receiver binds **all interfaces**, so on a box with a public IP, port `53317`
-is reachable from the open internet while the TUI is running. Don't leave it that
-way. Three ways to handle it:
-
-- **Easiest:** install in **remote** mode — `OMARCHY_SEND_MODE=remote bash install.sh`
-  — and the installer applies the `ufw` rules for you (when a real `tailscale0`
-  interface is present).
-- **Manually**, restrict the port to the tailnet:
-
-  ```sh
-  ufw allow in on tailscale0 to any port 53317   # tailnet only
-  ufw deny 53317                                 # everything else
-  ```
-
-  Or the `nftables` equivalent (inet filter, input chain):
-
-  ```
-  iifname "tailscale0" tcp dport 53317 accept
-  tcp dport 53317 drop
-  ```
-
-- **Inside a container** (e.g. Docker `--network host` with userspace-networking
-  Tailscale, where there's no `tailscale0` and no `CAP_NET_ADMIN`): you can't
-  firewall from in there — apply it on the **host**. If the host already
-  default-denies inbound (only opens e.g. 22/80/443), `53317` is already blocked
-  from the internet yet still reachable over the tailnet (tailscaled delivers it
-  via loopback) — nothing more to do.
-
-Always set a **`--pin`** as a second layer regardless.
-
-> **Verifying** the port is closed: don't trust `nc -z`, `telnet`, or
-> `/dev/tcp` — some hosting providers (Hostinger, DigitalOcean, …) answer the TCP
-> handshake (SYN/ACK) for *every* port at their network edge, so those tools
-> report a firewalled port as "open". Only an **app-layer** probe is truthful:
->
-> ```sh
-> curl -sk https://<public-ip>:53317/api/localsend/v2/info   # should time out / hang
-> curl -sk https://<tailnet-ip>:53317/api/localsend/v2/info  # returns device info
-> ```
-
-### Right-click send (Nautilus)
-
-On an Omarchy desktop, the installer adds a **"Send via Omarchy-Send"** entry to
-the Nautilus context menu. Right-click one or more files or folders (multi-select
-works) and choose it: a floating terminal opens with your selection pre-staged on
-the device list — pick a device and it sends, then the window closes itself once
-the transfer finishes.
-
-This is a graphical convenience and is **desktop-only**: it's installed only when
-Nautilus is present, so headless servers don't get it (and don't need it — use
-the TUI or headless send there). Under the hood it just runs
-`omarchy-send <paths…>`, which you can call yourself from any terminal.
-
-### Theming
-
-On Omarchy, the TUI reads the active theme's `~/.config/omarchy/current/theme/colors.toml`
-and matches it. Elsewhere (headless / over SSH) it falls back to **ANSI palette
-colours**, so it tracks whatever colour scheme the connecting terminal uses.
-
-### Device name
-
-On first run, each device is given a random, friendly display name such as
-**"Crimson Quasar"** (a colour + a celestial object), generated once and saved.
-This avoids broadcasting your machine's hostname to everyone on the network —
-handy on a laptop joining untrusted Wi-Fi. The hostname is still carried in the
-device-model field, and you can set any name you like with `--alias` or the `e`
-key in the Settings tab.
-
-Config (including the generated TLS identity) is stored at
-`~/.config/omarchy-send/config.json`. Received files default to `~/Omarchy-Send/`.
-
-### Unattended / headless mode
-
-For a server that should accept files without anyone at the keyboard, combine
-auto-accept with a PIN so only senders who know the code can push to it:
-
-```sh
-omarchy-send --auto-accept --pin 2468
-```
-
-### Keys
-
-- `1`–`5` or `tab` — switch between Devices / Transfers / Manage / Messages / Settings
-- Peers: `enter` send to the selected peer · `m` message · `v` send clipboard · `+` add a remote device · `r` refresh · `/` filter
-- PIN-protected peers: messages prompt for the PIN and retry, just like file sends
-- Send finder: type to fuzzy-filter · `enter` stage file/folder · `ctrl+d` folders-only · `ctrl+s` send · `ctrl+u` up a dir · `esc` back
-- Incoming prompt: `y` accept · `n` reject
-- Transfers: `c` clear finished
-- Messages: `enter` read the full message · `y` copy it to the clipboard · `d`
-  delete it (incoming messages arrive automatically, with a footer notice)
-- Manage: `space` mark file/folder · `a` mark all · `d` delete marked (or the one
-  under the cursor) · `r` refresh · `/` filter — deletion asks to confirm first
-- Settings: `e` edit (alias / receive dir / PIN) · `a` toggle auto-accept · `i` toggle icons · `n` toggle notifications
-- Sending to a PIN-protected peer prompts for the PIN and retries
-- `q` quit
-
-### Debugging
-
-Set `OMARCHY_SEND_LOG=/path/to/log` to record discovery/transfer events to a file.
-
-## Notes on iOS
-
-iOS LocalSend decides whether received media lands in the Photo Library based on
-its own in-app settings; its post-receive "open file" prompt can fail to open
-files from the app cache. Both behaviours occur identically with the official
-desktop client and are not controlled by the sender.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Omarchy-Send is an independent implementation of
-the published [LocalSend protocol](https://github.com/localsend/protocol); it is
-not affiliated with or endorsed by the LocalSend project. The terminal UI is built on the
-[Charm](https://github.com/charmbracelet) libraries (also MIT).
+MIT — see [LICENSE](LICENSE). Omasend is an independent project, not
+affiliated with or endorsed by LocalSend; it merely speaks the same protocol.
