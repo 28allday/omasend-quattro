@@ -138,6 +138,18 @@ Item {
     root.statusLine = "Sending " + root.stagedPaths.length + " item(s) to " + peer.alias + "…"
   }
 
+  // "Send a file" opens the GTK file chooser via the service (the panel
+  // closes so the dialog isn't under a keyboard-exclusive overlay); the
+  // typed-path modal remains only as the no-zenity fallback.
+  function pickFiles(peer) {
+    if (!peer) return
+    if (root.hasService && root.svc.pickAndSend(peer)) {
+      root.close()
+      return
+    }
+    root.openModal("files", peer)
+  }
+
   function close() {
     if (!root.opened) return
     root.opened = false
@@ -369,7 +381,7 @@ Item {
                  || event.key === Qt.Key_M) && peer) {
               root.openModal("message", peer); event.accepted = true
             } else if (event.key === Qt.Key_F && peer) {
-              root.openModal("files", peer); event.accepted = true
+              root.pickFiles(peer); event.accepted = true
             } else if (event.key === Qt.Key_Plus) {
               root.openModal("addpeer", null); event.accepted = true
             }
@@ -649,8 +661,8 @@ Item {
                 }
                 Button {
                   iconText: "󰈙"
-                  tooltipText: "Send a file or folder (f)"
-                  onClicked: root.openModal("files", modelData)
+                  tooltipText: "Send files (f)"
+                  onClicked: root.pickFiles(modelData)
                 }
               }
             }

@@ -201,6 +201,22 @@ Item {
           seq: ev.seq, ok: ev.ok === true, error: ev.error || "",
           pinRequired: ev.pinRequired === true, to: ev.to || ""
         }
+        // Picker-initiated sends have no panel watching them, so report the
+        // outcome as a notification. A PIN-gated peer re-opens the panel with
+        // the same files staged — its Enter-send path owns the PIN prompt.
+        if (ev.seq === root.pickerSeq && root.pickerSeq > 0) {
+          root.pickerSeq = -1
+          if (ev.ok === true) {
+            root.notify("Sent to " + (ev.to || "peer"), "")
+          } else if (ev.pinRequired === true) {
+            root.notify("PIN required",
+                        "Pick the device and press Enter, then type its PIN")
+            root.summonStaged(root.pickerPaths)
+          } else {
+            root.notify("Send failed", ev.error || "")
+          }
+          root.pickerPaths = []
+        }
         break
     }
   }
@@ -296,6 +312,64 @@ Item {
 
   function addPeer(host) {
     root.request({ req: "addPeer", host: String(host || "") })
+  }
+
+  // ------------------------------------------------------------ file picker
+  // "Send a file" from the panel opens a GTK file chooser (zenity) and sends
+  // the selection straight to the chosen peer — the panel closes first so the
+  // dialog isn't fighting a keyboard-exclusive overlay. Returns false when
+  // zenity isn't available, letting the panel fall back to its path modal.
+  property bool hasZenity: false
+  property var pickPeer: null
+  property int pickerSeq: -1
+  property var pickerPaths: []
+
+  function summonStaged(paths) {
+    if (!paths || paths.length === 0) return
+    var payload = JSON.stringify({ paths: paths })
+    if (root.shell && typeof root.shell.summon === "function")
+      root.shell.summon(root.pluginId, payload)
+    else
+      Quickshell.execDetached(["omarchy-shell", "shell", "summon", root.pluginId, payload])
+  }
+
+  Process {
+    id: zenityCheck
+    running: true
+    command: ["sh", "-c", "command -v zenity"]
+    onExited: function(code) { root.hasZenity = (code === 0) }
+  }
+
+  Process {
+    id: picker
+    stdout: StdioCollector {
+      onStreamFinished: root.pickerDone(text)
+    }
+  }
+
+  function pickAndSend(peer) {
+    if (!root.hasZenity || picker.running || !peer) return false
+    root.pickPeer = peer
+    picker.command = ["zenity", "--file-selection", "--multiple",
+                      "--separator=\n",
+                      "--title", "Send to " + peer.alias + " via Omasend"]
+    picker.running = true
+    return true
+  }
+
+  function pickerDone(out) {
+    var peer = root.pickPeer
+    root.pickPeer = null
+    var paths = String(out || "").split("\n").map(function(p) {
+      return p.trim()
+    }).filter(function(p) { return p !== "" })
+    if (!peer || paths.length === 0) return   // dialog cancelled
+    root.pickerPaths = paths
+    root.pickerSeq = root.sendFiles("", peer.ip, paths, "")
+    if (root.pickerSeq < 0)
+      root.notify("Omasend", "Engine not connected — could not send")
+    else
+      root.notify("Sending " + paths.length + " item(s) to " + peer.alias, "")
   }
 
   function clearUnread() { root.unreadMessages = 0 }
