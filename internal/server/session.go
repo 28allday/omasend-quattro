@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"sync"
 
-	"omarchy-send/internal/protocol"
+	"omasend/internal/protocol"
 )
 
 // fileEntry tracks one file within a session.

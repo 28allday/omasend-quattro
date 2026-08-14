@@ -17,9 +17,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"omarchy-send/internal/dbg"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/dbg"
+	"omasend/internal/protocol"
+	"omasend/internal/transfer"
 )
 
 // PeerSink records a peer learned from an inbound request (e.g. /register).

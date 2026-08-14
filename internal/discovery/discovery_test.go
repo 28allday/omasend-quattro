@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/server"
+	"omasend/internal/protocol"
+	"omasend/internal/server"
 )
 
 func mkInfo(alias, fp string, port int) protocol.DeviceInfo {

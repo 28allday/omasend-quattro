@@ -19,13 +19,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"omarchy-send/internal/app"
-	"omarchy-send/internal/clipboard"
-	"omarchy-send/internal/config"
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/server"
-	"omarchy-send/internal/theme"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/app"
+	"omasend/internal/clipboard"
+	"omasend/internal/config"
+	"omasend/internal/discovery"
+	"omasend/internal/server"
+	"omasend/internal/theme"
+	"omasend/internal/transfer"
 )
 
 // Controller lets the TUI drive the network layer.

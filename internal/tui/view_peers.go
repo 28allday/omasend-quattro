@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
 )
 
 // peerItem adapts a discovered peer to bubbles/list.Item.

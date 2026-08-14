@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/security"
+	"omasend/internal/protocol"
+	"omasend/internal/security"
 )
 
 // TestTLSFingerprintMatches is the core HTTPS-interop guarantee: the

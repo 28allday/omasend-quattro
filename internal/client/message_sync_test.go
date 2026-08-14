@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/server"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
+	"omasend/internal/server"
+	"omasend/internal/transfer"
 )
 
 // SendMessageSync delivers the message and returns nil, with the text arriving

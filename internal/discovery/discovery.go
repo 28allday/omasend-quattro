@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"omarchy-send/internal/dbg"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/tsproxy"
+	"omasend/internal/dbg"
+	"omasend/internal/protocol"
+	"omasend/internal/tsproxy"
 )
 
 // EventKind distinguishes peer lifecycle events.

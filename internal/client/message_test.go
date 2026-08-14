@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/server"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
+	"omasend/internal/server"
 )
 
 // A sent message must arrive on the receiver's Messages channel with its text

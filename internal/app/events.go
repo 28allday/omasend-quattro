@@ -9,9 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/server"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/discovery"
+	"omasend/internal/server"
+	"omasend/internal/transfer"
 )
 
 // PeerFoundMsg is delivered when a peer is discovered or its address changes.

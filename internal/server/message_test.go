@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"omarchy-send/internal/protocol"
+	"omasend/internal/protocol"
 )
 
 func TestMessageOf(t *testing.T) {

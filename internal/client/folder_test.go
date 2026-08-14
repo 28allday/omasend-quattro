@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/server"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
+	"omasend/internal/server"
+	"omasend/internal/transfer"
 )
 
 // expand must walk a directory and advertise each file with a name relative to

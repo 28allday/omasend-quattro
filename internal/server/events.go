@@ -1,6 +1,6 @@
 package server
 
-import "omarchy-send/internal/protocol"
+import "omasend/internal/protocol"
 
 // AcceptDecision is the user's response to an incoming upload request.
 type AcceptDecision struct {

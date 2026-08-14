@@ -33,7 +33,9 @@ func TestExpandHome(t *testing.T) {
 
 // A config file whose receiveDir was stored as "~/…" is normalised to an
 // absolute path by Load — the regression that sent files into a literal "~"
-// directory under the process cwd.
+// directory under the process cwd. The seed lives in the legacy omarchy-send
+// dir, so this also covers first-run migration: Load reads the legacy file
+// and persists the normalised config to the new omasend dir.
 func TestLoadExpandsTildeReceiveDir(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -61,8 +63,9 @@ func TestLoadExpandsTildeReceiveDir(t *testing.T) {
 		t.Fatalf("ReceiveDir = %q, want %q", cfg.ReceiveDir, want)
 	}
 
-	// And the normalised value is what got persisted back.
-	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	// And the normalised value is what got persisted — to the NEW config dir,
+	// migrated off the legacy seed.
+	raw, err := os.ReadFile(filepath.Join(cfgHome, "omasend", "config.json"))
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}

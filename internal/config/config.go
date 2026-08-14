@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/security"
+	"omasend/internal/protocol"
+	"omasend/internal/security"
 )
 
 // ExpandHome resolves a leading "~" or "~/" to the user's home directory, so a
@@ -58,13 +58,28 @@ type Config struct {
 	path string `json:"-"`
 }
 
-// Dir returns the config directory, e.g. ~/.config/omarchy-send.
+// Dir returns the config directory, e.g. ~/.config/omasend.
 func Dir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "omarchy-send"), nil
+	return filepath.Join(base, "omasend"), nil
+}
+
+// legacyConfigPath returns the config.json of a pre-fork omarchy-send install,
+// or "" when none exists. Used to seed a first run so the device keeps its
+// alias, PIN, receive dir, and TLS identity (peers pin the fingerprint).
+func legacyConfigPath() string {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(base, "omarchy-send", "config.json")
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
 }
 
 // defaults returns a Config populated with sensible defaults for this host.
@@ -109,7 +124,18 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.path = path
-	case !os.IsNotExist(err):
+	case os.IsNotExist(err):
+		// First run: seed from a pre-fork omarchy-send config when present.
+		// Load persists to the new path below, so this is a one-time copy.
+		if legacy := legacyConfigPath(); legacy != "" {
+			if data, lerr := os.ReadFile(legacy); lerr == nil {
+				if jerr := json.Unmarshal(data, &cfg); jerr != nil {
+					return Config{}, jerr
+				}
+				cfg.path = path
+			}
+		}
+	default:
 		return Config{}, err
 	}
 

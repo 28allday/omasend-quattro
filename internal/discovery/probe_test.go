@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/protocol"
+	"omasend/internal/protocol"
 )
 
 // TestProbeRegistersPeer drives Probe against a stub /register that behaves like

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
+	"omasend/internal/transfer"
 )
 
 // When the receiver cancels mid-batch (its session is gone, so /upload returns

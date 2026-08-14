@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"omarchy-send/internal/server"
+	"omasend/internal/server"
 )
 
 // msgItem adapts a received message to bubbles/list.Item.

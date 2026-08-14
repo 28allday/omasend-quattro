@@ -7,11 +7,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"omarchy-send/internal/app"
-	"omarchy-send/internal/config"
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/app"
+	"omasend/internal/config"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
+	"omasend/internal/transfer"
 )
 
 func testModel(t *testing.T) Model {

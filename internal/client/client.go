@@ -23,11 +23,11 @@ import (
 	"sync"
 	"time"
 
-	"omarchy-send/internal/dbg"
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/transfer"
-	"omarchy-send/internal/tsproxy"
+	"omasend/internal/dbg"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
+	"omasend/internal/transfer"
+	"omasend/internal/tsproxy"
 )
 
 // errOpen wraps a failure to open a source file, so the send loop can skip just

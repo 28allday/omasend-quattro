@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"time"
 
-	"omarchy-send/internal/dbg"
+	"omasend/internal/dbg"
 )
 
 // appName is shown as the originating application in the notification daemon,

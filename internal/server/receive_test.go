@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/protocol"
+	"omasend/internal/protocol"
 )
 
 // TestReceiveFlow drives the full receiver path: prepare-upload (auto-accepted)

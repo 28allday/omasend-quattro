@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"omarchy-send/internal/config"
+	"omasend/internal/config"
 )
 
 // manageModel returns a model whose receive dir is a temp dir seeded with the

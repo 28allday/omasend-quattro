@@ -3,7 +3,7 @@ package tui
 import (
 	"github.com/charmbracelet/lipgloss"
 
-	"omarchy-send/internal/theme"
+	"omasend/internal/theme"
 )
 
 // Colours and styles, (re)built from the active Omarchy theme by applyTheme.

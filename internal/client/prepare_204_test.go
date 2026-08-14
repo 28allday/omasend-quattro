@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
 )
 
 // The official LocalSend client answers a message prepare-upload with 204 No

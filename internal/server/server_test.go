@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/protocol"
+	"omasend/internal/protocol"
 )
 
 func TestInfoEndpoint(t *testing.T) {

@@ -7,9 +7,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/server"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/protocol"
+	"omasend/internal/server"
+	"omasend/internal/transfer"
 )
 
 // An inbound message must drive the notify callback with the sender's name and

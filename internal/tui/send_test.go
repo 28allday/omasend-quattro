@@ -8,10 +8,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"omarchy-send/internal/config"
-	"omarchy-send/internal/discovery"
-	"omarchy-send/internal/protocol"
-	"omarchy-send/internal/transfer"
+	"omasend/internal/config"
+	"omasend/internal/discovery"
+	"omasend/internal/protocol"
+	"omasend/internal/transfer"
 )
 
 // fakeCtrl records Send calls for quick-send tests.

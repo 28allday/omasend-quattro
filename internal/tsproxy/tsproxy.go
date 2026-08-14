@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"omarchy-send/internal/dbg"
+	"omasend/internal/dbg"
 )
 
 // conventionalAddr is where tailscaled's SOCKS5 proxy conventionally listens

@@ -1,4 +1,4 @@
-module omarchy-send
+module omasend
 
 go 1.26.1
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"omarchy-send/internal/protocol"
+	"omasend/internal/protocol"
 )
 
 // TestPrepareUploadPIN verifies the PIN gate: missing/wrong PIN -> 401, correct
