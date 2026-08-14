@@ -755,12 +755,13 @@ Item {
 
                 Item {
                   width: parent.width
-                  height: Style.font.body + Style.spacing.xs
+                  height: Math.max(Style.font.body + Style.spacing.xs, trDismiss.implicitHeight)
 
                   Text {
                     anchors.left: parent.left
                     anchors.right: trStatus.left
                     anchors.rightMargin: Style.spacing.md
+                    anchors.verticalCenter: parent.verticalCenter
                     text: (modelData.dir === "in" ? "↓ " : "↑ ") + modelData.file
                     color: root.foreground
                     font.family: root.fontFamily
@@ -768,9 +769,27 @@ Item {
                     elide: Text.ElideMiddle
                   }
 
+                  // Per-row dismiss for anything no longer running — failed
+                  // rows especially, since those never auto-sweep.
+                  Button {
+                    id: trDismiss
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: modelData.kind === "error" || modelData.kind === "filedone"
+                             || modelData.kind === "cancel"
+                    width: visible ? implicitWidth : 0
+                    iconText: "󰅖"
+                    tooltipText: "Clear this transfer"
+                    verticalPadding: 0
+                    foreground: modelData.kind === "error" ? root.urgent : root.foreground
+                    onClicked: if (root.hasService) root.svc.dismissTransfer(modelData.id)
+                  }
+
                   Text {
                     id: trStatus
-                    anchors.right: parent.right
+                    anchors.right: trDismiss.visible ? trDismiss.left : parent.right
+                    anchors.rightMargin: trDismiss.visible ? Style.spacing.sm : 0
+                    anchors.verticalCenter: parent.verticalCenter
                     text: {
                       switch (modelData.kind) {
                         case "filedone": return "done · " + root.humanBytes(modelData.total)
@@ -985,7 +1004,7 @@ Item {
                     ? "↑↓ pick device · enter send staged · x clear · 1-4 tabs · esc close"
                     : "↑↓ move · enter/m message · f files · F folder · + add remote · 1-4 tabs · esc close"
             case 1: return "1-4 tabs · esc close"
-            case 2: return "c clear finished · 1-4 tabs · esc close"
+            case 2: return "󰅖 clear a row · c clear all finished · 1-4 tabs · esc close"
             default: return "edits save on enter · 1-4 tabs · esc close"
           }
         }

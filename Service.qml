@@ -398,6 +398,11 @@ Item {
     })
   }
 
+  // Drop a single row (the panel's per-row dismiss on failed transfers).
+  function dismissTransfer(id) {
+    root.transfers = root.transfers.filter(function(tr) { return tr.id !== id })
+  }
+
   // ---------------------------------------------------------------- IPC
   IpcHandler {
     target: "omasend"
