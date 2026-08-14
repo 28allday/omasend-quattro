@@ -72,7 +72,10 @@ there instead. Both speak the same protocol and happily talk to each other.
 The one-liner from Quick start installs the transfer engine
 (`omasend-engine`, a single static binary in `~/.local/bin`), registers and
 enables the shell plugin, and adds the icon and the Nautilus right-click
-entry. It's safe to run again; `omarchy plugin update` keeps the plugin
+entry. It also installs [zenity](https://gitlab.gnome.org/GNOME/zenity) if
+it's missing (asks for sudo) — that's the graphical chooser behind the
+panel's "Send file/folder" buttons; without it they fall back to a typed-path
+prompt. It's safe to run again; `omarchy plugin update` keeps the plugin
 itself up to date.
 
 Prefer to build from source? Clone the repo and run the same script — with Go

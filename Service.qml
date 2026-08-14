@@ -448,7 +448,13 @@ Item {
   // wantDir: false = multi-select files, true = pick folders (sent whole,
   // expanded on the wire by the engine).
   function pickAndSend(peer, wantDir) {
-    if (!root.hasZenity || picker.running || !peer) return false
+    if (!root.hasZenity) {
+      // Re-probe so a zenity installed after shell start is picked up on
+      // the next attempt without a shell restart.
+      zenityCheck.running = true
+      return false
+    }
+    if (picker.running || !peer) return false
     root.pickPeer = peer
     var cmd = ["zenity", "--file-selection", "--multiple", "--separator=\n"]
     if (wantDir === true) cmd.push("--directory")

@@ -9,8 +9,9 @@
 #      when run inside a clone with Go available, otherwise downloaded from
 #      the latest GitHub release).
 #   2. On an Omarchy quattro desktop (omarchy-shell present): registers the
-#      shell plugin (omarchy plugin add + enable), installs the paper-plane
-#      icon, and adds the Nautilus right-click "Send via Omasend" entry.
+#      shell plugin (omarchy plugin add + enable), installs zenity if missing
+#      (the panel's file chooser), the paper-plane icon, and the Nautilus
+#      right-click "Send via Omasend" entry.
 #   3. On anything else: engine only, with a note — the UI lives in the
 #      shell, so a non-quattro box wants the original omarchy-send TUI
 #      instead.
@@ -92,7 +93,24 @@ fi
 "$OMARCHY" plugin enable "$PLUGIN_ID" right 2>/dev/null \
   || say "Enable it from Setup › Plugins (or: omarchy plugin enable $PLUGIN_ID)"
 
-# ---- 3. icon ---------------------------------------------------------------
+# ---- 3. zenity (graphical file chooser) ------------------------------------
+# The panel's "Send file/folder" buttons open a GTK chooser via zenity, which
+# is NOT in the Omarchy base install (some boxes only have it as a Steam
+# dependency). Without it the panel silently falls back to a typed-path
+# prompt, so make sure it's really here. sudo reads from /dev/tty so the
+# password prompt works under curl | bash; failure is non-fatal.
+if ! command -v zenity >/dev/null 2>&1; then
+  say "Installing zenity (file chooser for panel sends — needs sudo)…"
+  # shellcheck disable=SC2024  # stdin redirect is for sudo's own password prompt
+  if sudo pacman -S --needed --noconfirm zenity </dev/tty; then
+    say "zenity installed."
+  else
+    say "Could not install zenity — 'Send file/folder' will fall back to a"
+    say "typed-path prompt until you run: sudo pacman -S zenity"
+  fi
+fi
+
+# ---- 4. icon ---------------------------------------------------------------
 # Embedded so the curl-piped install has nothing extra to fetch.
 icon_dir="$HOME/.local/share/icons/hicolor/scalable/apps"
 mkdir -p "$icon_dir"
@@ -106,7 +124,7 @@ cat > "$icon_dir/omasend.svg" <<'SVG'
 SVG
 gtk-update-icon-cache -q -t -f "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 
-# ---- 4. Nautilus right-click ----------------------------------------------
+# ---- 5. Nautilus right-click ----------------------------------------------
 # Desktop-only nicety: "Send via Omasend" summons the panel with the selected
 # files staged. Ships from the clone when available, otherwise fetched from
 # the repo — one source of truth, no embedded copy to drift.
@@ -129,7 +147,7 @@ if command -v nautilus >/dev/null 2>&1; then
   nautilus -q >/dev/null 2>&1 || true
 fi
 
-# ---- 5. agent context ------------------------------------------------------
+# ---- 6. agent context ------------------------------------------------------
 # Teach AI agents on this box what Omasend is and how to send from scripts.
 # Idempotent: an existing managed block is replaced, other content is kept.
 claude_md="$HOME/.claude/CLAUDE.md"
