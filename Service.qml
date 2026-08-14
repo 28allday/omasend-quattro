@@ -301,8 +301,11 @@ Item {
     })
     root.transfers = next
     // Aggregate received-file notifications: a folder of N files must raise
-    // one "Received N files" toast, not N separate ones.
-    if (ev.dir === "in" && ev.kind === "filedone") {
+    // one "Received N files" toast, not N separate ones. The panel-open check
+    // happens HERE, at arrival — the user watched this land in the open
+    // panel, so no toast later even if they close it before the debounce
+    // fires (that late pop read as a flash over the closing panel).
+    if (ev.dir === "in" && ev.kind === "filedone" && !root.panelOpen()) {
       root.recvBatchCount++
       root.recvBatchLast = ev.file || "a file"
       recvBatch.restart()
