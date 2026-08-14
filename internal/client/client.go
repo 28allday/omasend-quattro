@@ -193,8 +193,13 @@ func (s *Sender) SendFilesSync(ctx context.Context, peer discovery.Peer, paths [
 				skipped = append(skipped, meta.FileName)
 				continue
 			}
+			s.emit(transfer.Event{Dir: transfer.Outgoing, Kind: transfer.Error, ID: key, FileName: meta.FileName, Err: err})
 			return fmt.Errorf("upload %q: %w", meta.FileName, err)
 		}
+		// Mirror the async path: uploadFile emits Start/Progress but leaves
+		// FileDone to its caller. Without this, an Events() consumer (the
+		// engine daemon) sees sync-sent files stuck in progress forever.
+		s.emit(transfer.Event{Dir: transfer.Outgoing, Kind: transfer.FileDone, ID: key, FileName: meta.FileName, Received: meta.Size, Total: meta.Size})
 		if onDone != nil {
 			onDone(meta.FileName, meta.Size)
 		}

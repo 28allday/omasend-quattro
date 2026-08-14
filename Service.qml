@@ -164,6 +164,19 @@ Item {
         if (ev.event === "ready") {
           root.engineMissing = false
           root.offers = []          // engine restarted: parked offers are gone
+          // In-flight rows belong to the previous engine and can never
+          // finish — mark them cancelled so the sweep clears them.
+          var now = Date.now()
+          root.transfers = root.transfers.map(function(tr) {
+            if (tr.kind === "start" || tr.kind === "progress") {
+              var c = {}
+              for (var k in tr) c[k] = tr[k]
+              c.kind = "cancel"
+              c.doneAt = now
+              return c
+            }
+            return tr
+          })
         }
         break
       case "peers":
