@@ -10,9 +10,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -162,6 +164,29 @@ func (h *hub) broadcast(ev event) {
 			delete(h.clients, c)
 			close(c.out)
 		}
+	}
+}
+
+// sendTo queues a line for one client if it is still a member. broadcast may
+// drop a stalled client and close its queue at any time; membership and that
+// close both happen under mu, so checking membership here makes this send
+// race-free (a bare send on c.out could hit a closed channel and panic).
+func (h *hub) sendTo(c *hubClient, ev event) {
+	line, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	line = append(line, '\n')
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.clients[c] {
+		return
+	}
+	select {
+	case c.out <- line:
+	default:
+		delete(h.clients, c)
+		close(c.out)
 	}
 }
 
@@ -367,6 +392,25 @@ func (e *engine) holdOffer(ctx context.Context, req server.AcceptRequest) {
 	}()
 }
 
+// pendingOfferEvents snapshots the parked offers as offer events, for replay
+// to a freshly connected client.
+func (e *engine) pendingOfferEvents() []event {
+	e.offerMu.Lock()
+	defer e.offerMu.Unlock()
+	out := make([]event, 0, len(e.offers))
+	for id, req := range e.offers {
+		files := make([]fileJSON, 0, len(req.Files))
+		for _, f := range req.Files {
+			files = append(files, fileJSON{Name: f.FileName, Size: f.Size})
+		}
+		out = append(out, event{
+			Event: "offer", OfferID: id, From: req.From.Alias, IP: req.IP,
+			Total: req.TotalSize, Files: files,
+		})
+	}
+	return out
+}
+
 // resolveOffer answers a parked offer exactly once and tells the clients.
 func (e *engine) resolveOffer(id string, accept bool) {
 	e.offerMu.Lock()
@@ -402,7 +446,7 @@ func (e *engine) handleSend(ctx context.Context, req request) {
 	fail := func(err error) {
 		e.hub.broadcast(event{
 			Event: "sendResult", Seq: req.Seq, OK: boolPtr(false),
-			Error: err.Error(), PinRequired: err == transfer.ErrPinRequired,
+			Error: err.Error(), PinRequired: errors.Is(err, transfer.ErrPinRequired),
 		})
 	}
 	if req.To == "" && req.IP == "" {
@@ -514,25 +558,28 @@ func (e *engine) serveClient(ctx context.Context, conn net.Conn) {
 		conn.Close()
 	}()
 
-	greet := func(ev event) {
-		line, err := json.Marshal(ev)
-		if err != nil {
-			return
-		}
-		select {
-		case c.out <- append(line, '\n'):
-		default:
-		}
-	}
+	greet := func(ev event) { e.hub.sendTo(c, ev) }
 	greet(e.statusEvent("ready"))
 	greet(e.peersEvent())
 	greet(event{Event: "messages", Messages: e.messageHistory()})
+	// Replay offers still parked from before this client connected (a shell
+	// restart inside the accept window must not lose the prompt).
+	for _, ev := range e.pendingOfferEvents() {
+		greet(ev)
+	}
 
-	dec := json.NewDecoder(conn)
-	for {
+	// One request per line, parsed individually: a malformed or mistyped line
+	// is skipped rather than tearing down the connection (a streaming Decoder
+	// cannot resync after an error, which dropped the client on any stray
+	// byte). Generous line cap for long staged-path lists.
+	scan := bufio.NewScanner(conn)
+	scan.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scan.Scan() {
+		line := scan.Bytes()
 		var req request
-		if err := dec.Decode(&req); err != nil {
-			break
+		if err := json.Unmarshal(line, &req); err != nil {
+			log.Printf("client: skipping bad line (%v)", err)
+			continue
 		}
 		switch req.Req {
 		case "send":

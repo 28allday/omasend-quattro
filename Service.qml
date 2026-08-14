@@ -66,6 +66,7 @@ Item {
   // Send results keyed by seq, for the panel to react to (PIN prompt, errors).
   property var lastSendResult: null   // {seq, ok, error, pinRequired, to}
   property int _seq: 0
+  property var ipcPending: ({})       // seqs of IPC-initiated sends awaiting a result
 
   // ---------------------------------------------------------------- engine
   // Connection strategy: try the socket first — an engine may already be
@@ -87,7 +88,12 @@ Item {
       }
       onConnectionStateChanged: {
         root.connected = connected
-        if (!connected) root.scheduleReconnect()   // established, then dropped
+        if (connected) {
+          root.reconnectDelay = 1500   // healthy again: reset the backoff
+          root.engineError = ""
+        } else {
+          root.scheduleReconnect()     // established, then dropped
+        }
       }
       onError: function(err) { root.scheduleReconnect() }  // attempt failed
     }
@@ -99,6 +105,10 @@ Item {
     sockLoader.active = true
   }
 
+  // Exponential backoff: a persistently failing engine (e.g. port 53317 held
+  // by the legacy omarchy-send TUI) must not become a 1.5s fork/exit loop.
+  property int reconnectDelay: 1500
+
   function scheduleReconnect() {
     root.connected = false
     // Nothing listening: (re)start the engine unless it's mid-start or the
@@ -108,28 +118,48 @@ Item {
       root.engineSpawned = true
       engineProc.running = true
     }
-    if (!reconnect.running) reconnect.start()
+    if (!reconnect.running) {
+      reconnect.interval = root.reconnectDelay
+      root.reconnectDelay = Math.min(root.reconnectDelay * 2, 30000)
+      reconnect.start()
+    }
   }
 
   Timer {
     id: reconnect
-    interval: 1500
     repeat: false
     onTriggered: root.attemptConnect()
   }
 
+  // Last line the engine wrote to stderr before exiting — surfaced in the
+  // panel so "engine keeps dying" comes with its reason (port in use, …).
+  property string engineError: ""
+
   Process {
     id: engineProc
     // sh -c so a PATH install works when ~/.local/bin/omasend-engine is
-    // absent; exec keeps the engine as the process we track.
+    // absent; exec keeps the engine as the process we track. The socket path
+    // is passed explicitly so both sides always agree, whatever the
+    // environment's fallback would be.
     command: ["sh", "-c",
-      'if [ -x "$1" ]; then exec "$1"; else exec omasend-engine; fi',
-      "omasend-engine-launch", root.engineBin]
+      'if [ -x "$1" ]; then exec "$1" -socket "$2"; else exec omasend-engine -socket "$2"; fi',
+      "omasend-engine-launch", root.engineBin, root.socketPath]
+    stderr: StdioCollector {
+      onStreamFinished: {
+        var lines = String(text || "").trim().split("\n")
+        if (lines.length && lines[lines.length - 1] !== "")
+          root.engineError = lines[lines.length - 1]
+      }
+    }
     onExited: function(code) {
       // 127 = neither binary found. Anything else: crashed or lost a race
       // with an already-running engine; either way just try the socket again.
       if (code === 127) root.engineMissing = true
-      if (!reconnect.running) reconnect.start()
+      if (!reconnect.running) {
+        reconnect.interval = root.reconnectDelay
+        root.reconnectDelay = Math.min(root.reconnectDelay * 2, 30000)
+        reconnect.start()
+      }
     }
   }
 
@@ -230,6 +260,15 @@ Item {
           }
           root.pickerPaths = []
         }
+        // IPC-initiated sends (omarchy-shell omasend send …) equally have no
+        // panel watching; without this their failures vanish silently.
+        if (root.ipcPending[ev.seq] === true) {
+          var pend = {}
+          for (var k in root.ipcPending) if (Number(k) !== ev.seq) pend[k] = true
+          root.ipcPending = pend
+          if (ev.ok !== true)
+            root.notify("Send failed", ev.error || "peer unreachable")
+        }
         break
     }
   }
@@ -261,8 +300,30 @@ Item {
       doneAt: doneAt
     })
     root.transfers = next
-    if (ev.dir === "in" && ev.kind === "filedone")
-      root.notify("Received " + (ev.file || "a file"), "Saved to " + root.receiveDir)
+    // Aggregate received-file notifications: a folder of N files must raise
+    // one "Received N files" toast, not N separate ones.
+    if (ev.dir === "in" && ev.kind === "filedone") {
+      root.recvBatchCount++
+      root.recvBatchLast = ev.file || "a file"
+      recvBatch.restart()
+    }
+  }
+
+  property int recvBatchCount: 0
+  property string recvBatchLast: ""
+
+  Timer {
+    id: recvBatch
+    interval: 1200
+    repeat: false
+    onTriggered: {
+      if (root.recvBatchCount === 1)
+        root.notify("Received " + root.recvBatchLast, "Saved to " + root.receiveDir)
+      else if (root.recvBatchCount > 1)
+        root.notify("Received " + root.recvBatchCount + " files", "Saved to " + root.receiveDir)
+      root.recvBatchCount = 0
+      root.recvBatchLast = ""
+    }
   }
 
   // Completed and cancelled rows clear themselves shortly after finishing;
@@ -421,10 +482,17 @@ Item {
       })
     }
 
-    // omarchy-shell ipc call omasend send '<alias>' '<text>'
+    // omarchy-shell omasend send '<alias>' '<text>'
     function send(to: string, text: string): string {
       var seq = root.sendMessage(to, "", text, "")
-      return seq > 0 ? "queued seq " + seq : "engine not connected"
+      if (seq > 0) {
+        var pend = {}
+        for (var k in root.ipcPending) pend[k] = true
+        pend[seq] = true
+        root.ipcPending = pend
+        return "queued seq " + seq
+      }
+      return "engine not connected"
     }
   }
 }

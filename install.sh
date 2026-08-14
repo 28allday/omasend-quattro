@@ -100,119 +100,25 @@ gtk-update-icon-cache -q -t -f "$HOME/.local/share/icons/hicolor" 2>/dev/null ||
 
 # ---- 4. Nautilus right-click ----------------------------------------------
 # Desktop-only nicety: "Send via Omasend" summons the panel with the selected
-# files staged. Ships from the clone when available, otherwise from the
-# embedded copy below (KEEP IN SYNC with nautilus/omasend.py).
+# files staged. Ships from the clone when available, otherwise fetched from
+# the repo — one source of truth, no embedded copy to drift.
 if command -v nautilus >/dev/null 2>&1; then
   ext_dir="$HOME/.local/share/nautilus-python/extensions"
   mkdir -p "$ext_dir"
   if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/nautilus/omasend.py" ]; then
     cp "$SCRIPT_DIR/nautilus/omasend.py" "$ext_dir/omasend.py"
+    say "Nautilus right-click installed (Send via Omasend)."
   else
-    cat > "$ext_dir/omasend.py" <<'PYEOF'
-"""Nautilus right-click integration for Omasend.
-
-Adds a "Send via Omasend" entry to the file/folder context menu. Omasend is
-a native omarchy-shell plugin, so the entry summons its panel with the
-selected paths staged as the summon payload — pick a device, press Enter,
-and the engine sends. No terminal involved.
-
-Both files and directories are supported (the engine expands a folder on
-send).
-
-Note on resolution: the Nautilus process inherits the graphical session's
-PATH, which may not include Omarchy's bin dir, so omarchy-shell is resolved
-to an absolute path — PATH first, then the known install locations.
-
-Installed to ~/.local/share/nautilus-python/extensions/ by omasend's
-install.sh on Omarchy desktops.
-"""
-
-import json
-import os
-import shutil
-
-from gi import require_version
-
-require_version("Nautilus", "4.1")
-
-from gi.repository import GObject, Gio, Nautilus
-
-PLUGIN_ID = "nosignal.omasend"
-
-
-def _resolve(name, fallbacks):
-    """Find an executable by PATH, then by a list of absolute fallback paths."""
-    found = shutil.which(name)
-    if found:
-        return found
-    for path in fallbacks:
-        if path and os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-    return None
-
-
-def _shell_binary():
-    home = os.path.expanduser("~")
-    fallbacks = [
-        "/usr/share/omarchy/bin/omarchy-shell",
-        os.path.join(home, ".local", "share", "omarchy", "bin", "omarchy-shell"),
-    ]
-    return _resolve("omarchy-shell", fallbacks)
-
-
-class OmasendAction(GObject.GObject, Nautilus.MenuProvider):
-    def _launch(self, paths):
-        shell = _shell_binary()
-        if not shell:
-            return
-        payload = json.dumps({"paths": paths})
-        Gio.Subprocess.new(
-            [shell, "shell", "summon", PLUGIN_ID, payload],
-            Gio.SubprocessFlags.NONE,
-        )
-
-    def _selected_paths(self, files):
-        paths = []
-        seen = set()
-        for file in files:
-            location = file.get_location()
-            if not location:
-                continue
-            path = location.get_path()
-            if path and path not in seen:
-                seen.add(path)
-                paths.append(path)
-        return paths
-
-    def _make_item(self, paths):
-        label = (
-            "Send via Omasend"
-            if len(paths) == 1
-            else f"Send {len(paths)} items via Omasend"
-        )
-        item = Nautilus.MenuItem(
-            name="OmasendNautilus::send",
-            label=label,
-            icon="omasend",
-        )
-        item.connect("activate", self._on_activate, paths)
-        return item
-
-    def _on_activate(self, _menu, paths):
-        self._launch(paths)
-
-    def get_file_items(self, *args):
-        files = args[0] if len(args) == 1 else args[1]
-        if not _shell_binary():
-            return []
-        paths = self._selected_paths(files)
-        if not paths:
-            return []
-        return [self._make_item(paths)]
-PYEOF
+    ext_url="https://raw.githubusercontent.com/$REPO/main/nautilus/omasend.py"
+    if curl -fsSL -o "$ext_dir/omasend.py.tmp" "$ext_url"; then
+      mv "$ext_dir/omasend.py.tmp" "$ext_dir/omasend.py"
+      say "Nautilus right-click installed (Send via Omasend)."
+    else
+      rm -f "$ext_dir/omasend.py.tmp"
+      say "Could not fetch $ext_url — skipped the Nautilus right-click entry."
+    fi
   fi
   nautilus -q >/dev/null 2>&1 || true
-  say "Nautilus right-click installed (Send via Omasend)."
 fi
 
 say ""

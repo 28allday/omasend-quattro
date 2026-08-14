@@ -904,12 +904,32 @@ Item {
               TextField {
                 id: pinField
                 width: parent.width - Style.space(110) - Style.spacing.md
+                       - (pinClear.visible ? pinClear.width + Style.spacing.md : 0)
                 password: true
                 placeholderText: root.hasService && root.svc.pinSet
-                                 ? "PIN set — type to change, clear to remove"
+                                 ? "PIN set — type a new one to change"
                                  : "no PIN — senders connect freely"
+                // Only a typed value changes the PIN. An empty commit must be
+                // a no-op — merely focusing the field and clicking away used
+                // to silently wipe a configured PIN. Removal is the explicit
+                // Clear button beside this field.
                 onEditingFinished: {
-                  if (root.hasService) root.svc.applySettings({ pin: String(text) })
+                  var v = String(text)
+                  if (root.hasService && v !== "") {
+                    root.svc.applySettings({ pin: v })
+                    text = ""
+                  }
+                }
+              }
+              Button {
+                id: pinClear
+                visible: root.hasService && root.svc.pinSet
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Clear"
+                tooltipText: "Remove the PIN — senders will connect freely"
+                onClicked: {
+                  if (root.hasService) root.svc.applySettings({ pin: "" })
+                  pinField.text = ""
                 }
               }
             }
@@ -972,10 +992,14 @@ Item {
               text: {
                 if (!root.hasService) return "Service not loaded."
                 if (root.svc.engineMissing)
-                  return "omasend-engine not found. Install it, then reopen:\ncurl -fsSL <install url> | bash"
-                return (root.svc.connected ? "Connected" : "Connecting…")
-                       + " · port " + root.svc.port
-                       + (root.svc.fingerprint ? "\n" + root.svc.fingerprint.substring(0, 16) + "…" : "")
+                  return "omasend-engine not found. Install it, then reopen:\n"
+                       + "curl -fsSL https://raw.githubusercontent.com/28allday/omasend-quattro/main/install.sh | bash"
+                var s = (root.svc.connected ? "Connected" : "Connecting…")
+                        + " · port " + root.svc.port
+                        + (root.svc.fingerprint ? "\n" + root.svc.fingerprint.substring(0, 16) + "…" : "")
+                if (!root.svc.connected && root.svc.engineError !== "")
+                  s += "\nengine: " + root.svc.engineError
+                return s
               }
               color: Qt.darker(root.foreground, 1.25)
               font.family: root.fontFamily
