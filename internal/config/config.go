@@ -96,7 +96,7 @@ func defaults() Config {
 		// identifiable to peers that look past the display name.
 		Alias:       "",
 		Port:        protocol.DefaultPort,
-		ReceiveDir:  filepath.Join(home, "Omarchy-Send"),
+		ReceiveDir:  filepath.Join(home, "Omasend"),
 		DeviceModel: host,
 		DeviceType:  string(protocol.DeviceServer),
 		Protocol:    "https",
@@ -127,12 +127,15 @@ func Load() (Config, error) {
 	case os.IsNotExist(err):
 		// First run: seed from a pre-fork omarchy-send config when present.
 		// Load persists to the new path below, so this is a one-time copy.
+		// The receive dir is NOT carried over — omasend keeps its own
+		// download folder (~/Omasend) so the two apps never mix files.
 		if legacy := legacyConfigPath(); legacy != "" {
 			if data, lerr := os.ReadFile(legacy); lerr == nil {
 				if jerr := json.Unmarshal(data, &cfg); jerr != nil {
 					return Config{}, jerr
 				}
 				cfg.path = path
+				cfg.ReceiveDir = defaults().ReceiveDir
 			}
 		}
 	default:

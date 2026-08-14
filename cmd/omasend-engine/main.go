@@ -460,6 +460,9 @@ func (e *engine) handleSet(req request) {
 	}
 	if req.ReceiveDir != nil && strings.TrimSpace(*req.ReceiveDir) != "" {
 		e.cfg.ReceiveDir = config.ExpandHome(*req.ReceiveDir)
+		if err := os.MkdirAll(e.cfg.ReceiveDir, 0o755); err != nil {
+			log.Printf("receive dir: %v", err)
+		}
 		e.srv.SetReceiveDir(e.cfg.ReceiveDir)
 	}
 	if req.AutoAccept != nil {
@@ -575,6 +578,12 @@ func main() {
 	}
 	if *portFlag != 0 {
 		cfg.Port = *portFlag
+	}
+
+	// Make sure the download folder exists up front, so the first receive
+	// never races directory creation and the folder is browsable immediately.
+	if err := os.MkdirAll(cfg.ReceiveDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "receive dir: %v\n", err)
 	}
 
 	// Single instance per socket: a live engine answers a dial; a stale file

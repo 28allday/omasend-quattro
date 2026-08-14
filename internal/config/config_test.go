@@ -33,9 +33,7 @@ func TestExpandHome(t *testing.T) {
 
 // A config file whose receiveDir was stored as "~/…" is normalised to an
 // absolute path by Load — the regression that sent files into a literal "~"
-// directory under the process cwd. The seed lives in the legacy omarchy-send
-// dir, so this also covers first-run migration: Load reads the legacy file
-// and persists the normalised config to the new omasend dir.
+// directory under the process cwd.
 func TestLoadExpandsTildeReceiveDir(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -44,11 +42,11 @@ func TestLoadExpandsTildeReceiveDir(t *testing.T) {
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)
 
-	dir := filepath.Join(cfgHome, "omarchy-send")
+	dir := filepath.Join(cfgHome, "omasend")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	seed := map[string]any{"alias": "t", "receiveDir": "~/Omarchy-Send"}
+	seed := map[string]any{"alias": "t", "receiveDir": "~/Omasend"}
 	data, _ := json.Marshal(seed)
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o600); err != nil {
 		t.Fatalf("seed config: %v", err)
@@ -58,14 +56,13 @@ func TestLoadExpandsTildeReceiveDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := filepath.Join(home, "Omarchy-Send")
+	want := filepath.Join(home, "Omasend")
 	if cfg.ReceiveDir != want {
 		t.Fatalf("ReceiveDir = %q, want %q", cfg.ReceiveDir, want)
 	}
 
-	// And the normalised value is what got persisted — to the NEW config dir,
-	// migrated off the legacy seed.
-	raw, err := os.ReadFile(filepath.Join(cfgHome, "omasend", "config.json"))
+	// And the normalised value is what got persisted back.
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -75,5 +72,41 @@ func TestLoadExpandsTildeReceiveDir(t *testing.T) {
 	}
 	if onDisk["receiveDir"] != want {
 		t.Fatalf("persisted receiveDir = %q, want %q", onDisk["receiveDir"], want)
+	}
+}
+
+// First run with a pre-fork omarchy-send config present: identity (alias)
+// migrates, but the receive dir does NOT — omasend keeps its own download
+// folder so the two apps never mix files.
+func TestLoadMigratesLegacyConfigWithOwnReceiveDir(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+
+	legacy := filepath.Join(cfgHome, "omarchy-send")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	seed := map[string]any{"alias": "gav", "receiveDir": filepath.Join(home, "Omarchy-Send")}
+	data, _ := json.Marshal(seed)
+	if err := os.WriteFile(filepath.Join(legacy, "config.json"), data, 0o600); err != nil {
+		t.Fatalf("seed legacy config: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Alias != "gav" {
+		t.Fatalf("Alias = %q, want migrated %q", cfg.Alias, "gav")
+	}
+	if want := filepath.Join(home, "Omasend"); cfg.ReceiveDir != want {
+		t.Fatalf("ReceiveDir = %q, want fork default %q", cfg.ReceiveDir, want)
+	}
+	if _, err := os.Stat(filepath.Join(cfgHome, "omasend", "config.json")); err != nil {
+		t.Fatalf("migrated config not persisted: %v", err)
 	}
 }
