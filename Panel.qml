@@ -44,7 +44,6 @@ Item {
   onSvcChanged: {
     if (!root.hasService) return
     if (!aliasField.activeFocus) aliasField.text = root.svc.alias
-    if (!dirField.activeFocus) dirField.text = root.svc.receiveDir
   }
 
   // ------------------------------------------------------------------ theme
@@ -936,35 +935,15 @@ Item {
 
             PanelSectionHeader { text: "RECEIVING" }
 
-            Row {
+            // The receive folder is fixed (~/Omasend) — shown, not editable.
+            Text {
               width: parent.width
-              spacing: Style.spacing.md
-
-              Text {
-                text: "Folder"
-                width: Style.space(110)
-                anchors.verticalCenter: parent.verticalCenter
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-              }
-              TextField {
-                id: dirField
-                width: parent.width - Style.space(110) - Style.spacing.md
-                Component.onCompleted: text = root.hasService ? root.svc.receiveDir : ""
-                Connections {
-                  target: root.svc
-                  enabled: root.hasService
-                  function onReceiveDirChanged() {
-                    if (!dirField.activeFocus) dirField.text = root.svc.receiveDir
-                  }
-                }
-                onEditingFinished: {
-                  var v = String(text).trim()
-                  if (root.hasService && v !== "" && v !== root.svc.receiveDir)
-                    root.svc.applySettings({ receiveDir: v })
-                }
-              }
+              text: "Files land in " + (root.hasService && root.svc.receiveDir !== ""
+                                        ? root.svc.receiveDir : "~/Omasend")
+              color: Qt.darker(root.foreground, 1.25)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideMiddle
             }
 
             Row {
