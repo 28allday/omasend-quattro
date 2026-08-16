@@ -116,7 +116,9 @@ The panel is fully keyboard-driven:
 | `Esc` / `q` | Close the panel |
 
 Every row also works with the mouse — the icons on a device row send a
-message, files, or a folder directly.
+message, files, or a folder directly. A single click only selects a device;
+**double-click** it to send whatever you have staged (or to open a message
+when nothing is staged).
 
 ### Receiving
 
@@ -128,6 +130,12 @@ if you'd rather everything just arrives.
 
 Set a **PIN** in Settings and senders must enter it before anything reaches
 you — the same PIN mechanism the official LocalSend apps use.
+
+**Files arriving but no notification?** Check Do Not Disturb — with DND on,
+the shell still accepts every notification and files it into history, it just
+never shows one, so arrivals land silently in `~/Omasend`. Run
+`omarchy-shell notifications dndState` to check, `setDnd off` to turn it off,
+and `showHistory` to replay what you missed.
 
 ### Messages
 

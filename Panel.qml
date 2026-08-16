@@ -530,7 +530,7 @@ Item {
 
               Text {
                 width: parent.width
-                text: "Send " + root.stagedPaths.length + " item(s) — pick a device, press Enter"
+                text: "Send " + root.stagedPaths.length + " item(s) — pick a device, press Enter or double-click"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
