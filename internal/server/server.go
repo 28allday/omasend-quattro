@@ -25,6 +25,26 @@ import (
 // PeerSink records a peer learned from an inbound request (e.g. /register).
 type PeerSink func(info protocol.DeviceInfo, ip string)
 
+// Caps on what an unauthenticated peer can make us hold in memory or write to
+// disk. /register and /prepare-upload are both reachable before the user has
+// accepted anything, so their JSON bodies are read through a MaxBytesReader
+// rather than straight off the wire.
+const (
+	// maxRegisterBody bounds a /register body. It carries one DeviceInfo —
+	// a handful of short strings — so this is already generous.
+	maxRegisterBody = 64 << 10 // 64 KiB
+
+	// maxPrepareBody bounds a /prepare-upload body. This one scales with the
+	// number of files in a folder send (roughly 200 bytes of metadata each),
+	// so it is sized for a very large folder, not a single file.
+	maxPrepareBody = 8 << 20 // 8 MiB
+
+	// maxMessageText bounds the text of an inbound message. Messages ride in
+	// the preview field of prepare-upload, so without this a peer could park
+	// most of maxPrepareBody in the message channel.
+	maxMessageText = 64 << 10 // 64 KiB
+)
+
 // Options configures a Server.
 type Options struct {
 	Info       protocol.DeviceInfo
@@ -163,7 +183,8 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if s.opts.OnPeer != nil {
 		var info protocol.DeviceInfo
-		if err := json.NewDecoder(r.Body).Decode(&info); err == nil && info.Fingerprint != "" {
+		body := http.MaxBytesReader(w, r.Body, maxRegisterBody)
+		if err := json.NewDecoder(body).Decode(&info); err == nil && info.Fingerprint != "" {
 			dbg.Logf("register from %s: alias=%q proto=%s port=%d", clientIP(r), info.Alias, info.Protocol, info.Port)
 			s.opts.OnPeer(info, clientIP(r))
 		} else if err != nil {
@@ -176,7 +197,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 // handlePrepareUpload asks the user to accept, then issues a session + tokens.
 func (s *Server) handlePrepareUpload(w http.ResponseWriter, r *http.Request) {
 	var req protocol.PrepareUploadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	body := http.MaxBytesReader(w, r.Body, maxPrepareBody)
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		dbg.Logf("prepare-upload from %s: decode error: %v", clientIP(r), err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -224,6 +247,9 @@ func messageOf(files map[string]protocol.FileMetadata) (string, bool) {
 	}
 	for _, f := range files {
 		if f.Preview != "" && isTextType(f.FileType) {
+			if len(f.Preview) > maxMessageText {
+				return "", false // over-long: treat as a file, not a message
+			}
 			return f.Preview, true
 		}
 	}
@@ -314,8 +340,14 @@ func (s *Server) writeFile(sess *session, fe *fileEntry, key string, r io.Reader
 		return "", err
 	}
 
+	// Bound the stream by the size declared in prepare-upload — the figure the
+	// user saw and accepted. Without this a peer can declare a small file and
+	// then stream until the disk fills. One byte of headroom lets us tell
+	// "exactly the declared size" from "more than declared" below.
+	limited := io.LimitReader(r, fe.meta.Size+1)
+
 	pr := &progressReader{
-		r:     r,
+		r:     limited,
 		total: fe.meta.Size,
 		ctx:   sess.ctx,
 		emit: func(received int64) {
@@ -327,7 +359,7 @@ func (s *Server) writeFile(sess *session, fe *fileEntry, key string, r io.Reader
 	}
 	s.transfers <- transfer.Event{Dir: transfer.Incoming, Kind: transfer.Start, ID: key, FileName: fe.meta.FileName, Total: fe.meta.Size}
 
-	_, copyErr := io.Copy(f, pr)
+	written, copyErr := io.Copy(f, pr)
 	closeErr := f.Close()
 	if copyErr != nil || closeErr != nil {
 		_ = os.Remove(tmp)
@@ -335,6 +367,10 @@ func (s *Server) writeFile(sess *session, fe *fileEntry, key string, r io.Reader
 			return "", copyErr
 		}
 		return "", closeErr
+	}
+	if written > fe.meta.Size {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("sender exceeded declared size of %d bytes for %q", fe.meta.Size, fe.meta.FileName)
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		return "", err

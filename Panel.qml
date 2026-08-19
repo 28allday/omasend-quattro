@@ -970,9 +970,18 @@ Item {
               width: parent.width
               text: {
                 if (!root.hasService) return "Service not loaded."
-                if (root.svc.engineMissing)
-                  return "omasend-engine not found. Install it, then reopen:\n"
-                       + "curl -fsSL https://raw.githubusercontent.com/28allday/omasend-quattro/main/install.sh | bash"
+                if (root.svc.engineSetupRunning)
+                  return "Setting up the transfer engine — building from this\n"
+                       + "plugin's own source, or fetching the pinned release."
+                if (root.svc.engineMissing) {
+                  var m = "The transfer engine isn't installed yet. It is a\n"
+                        + "separate binary, so installing the plugin alone\n"
+                        + "doesn't place it. Set it up from this plugin's own\n"
+                        + "checkout — nothing unpinned is fetched."
+                  if (root.svc.engineSetupError !== "")
+                    m += "\n\nLast attempt: " + root.svc.engineSetupError
+                  return m
+                }
                 var s = (root.svc.connected ? "Connected" : "Connecting…")
                         + " · port " + root.svc.port
                         + (root.svc.fingerprint ? "\n" + root.svc.fingerprint.substring(0, 16) + "…" : "")
@@ -981,6 +990,25 @@ Item {
                 return s
               }
               color: Qt.darker(root.foreground, 1.25)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.Wrap
+            }
+
+            Button {
+              visible: root.hasService && root.svc.engineMissing
+              enabled: !(root.hasService && root.svc.engineSetupRunning)
+              text: root.hasService && root.svc.engineSetupRunning
+                    ? "Setting up…" : "Set up engine"
+              tooltipText: "Install omasend-engine from this plugin's checkout"
+              onClicked: if (root.hasService) root.svc.installEngine()
+            }
+
+            Text {
+              visible: root.hasService && root.svc.engineMissing
+              width: parent.width
+              text: "Or from a terminal: " + (root.hasService ? root.svc.pluginDir : "<plugin dir>") + "/bin/omasend-setup"
+              color: Qt.darker(root.foreground, 1.4)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.Wrap

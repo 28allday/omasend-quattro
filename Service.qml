@@ -28,6 +28,12 @@ Item {
   // Engine binary + socket. The install script drops the engine in
   // ~/.local/bin; a PATH copy also works via the `sh -c` spawn below.
   readonly property string engineBin: home + "/.local/bin/omasend-engine"
+
+  // This plugin's own directory. `omarchy plugin add` clones the repo here, so
+  // the engine source, the setup script and the pinned checksum all sit beside
+  // this file — the engine is installed from the same commit as the UI.
+  readonly property string pluginDir:
+    Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
   readonly property string socketPath: {
     var rt = Quickshell.env("XDG_RUNTIME_DIR")
     return rt && rt !== "" ? rt + "/omasend.sock" : "/tmp/omasend.sock"
@@ -37,6 +43,10 @@ Item {
   property bool connected: false
   property bool engineMissing: false
   property bool engineSpawned: false
+
+  // Engine setup (bin/omasend-setup) state, surfaced in the panel.
+  property bool engineSetupRunning: false
+  property string engineSetupError: ""
 
   // Identity + settings (from ready/status events).
   property string alias: ""
@@ -172,6 +182,42 @@ Item {
         reconnect.start()
       }
     }
+  }
+
+  // Installs the engine from this checkout — builds from source where Go is
+  // available, otherwise fetches the pinned release and verifies its checksum.
+  // Never runs on its own: the user asks for it from the panel.
+  Process {
+    id: engineSetup
+    command: ["sh", "-c",
+      'exec "$1/bin/omasend-setup"',
+      "omasend-setup-launch", root.pluginDir]
+    stderr: StdioCollector {
+      onStreamFinished: {
+        var lines = String(text || "").trim().split("\n")
+        if (lines.length && lines[lines.length - 1] !== "")
+          root.engineSetupError = lines[lines.length - 1]
+      }
+    }
+    onExited: function(code) {
+      root.engineSetupRunning = false
+      if (code === 0) {
+        root.engineSetupError = ""
+        root.engineMissing = false
+        root.reconnectDelay = 500
+        root.attemptConnect()      // engine is there now — bring it up
+      } else if (root.engineSetupError === "") {
+        root.engineSetupError = "setup failed (exit " + code + ")"
+      }
+    }
+  }
+
+  // Asked for by the panel's "Set up engine" button.
+  function installEngine() {
+    if (root.engineSetupRunning) return
+    root.engineSetupError = ""
+    root.engineSetupRunning = true
+    engineSetup.running = true
   }
 
   Component.onCompleted: attemptConnect()

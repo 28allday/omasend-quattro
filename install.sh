@@ -6,9 +6,10 @@
 # documented in the README.
 #
 # What it does:
-#   1. Installs the omasend-engine binary to ~/.local/bin (built from source
-#      when run inside a clone with Go available, otherwise downloaded from
-#      the latest GitHub release).
+#   1. Installs the omasend-engine binary to ~/.local/bin via bin/omasend-setup
+#      — built from the checkout's own source when Go is available, otherwise
+#      downloaded at the version pinned in manifest.json and verified against
+#      the SHA-256 in engine/SHA256SUMS. Never "latest", never a moving branch.
 #   2. On an Omarchy quattro desktop (omarchy-shell present): registers the
 #      shell plugin (omarchy plugin add + enable), installs zenity if missing
 #      (the panel's file chooser), the paper-plane icon, and the Nautilus
@@ -19,13 +20,11 @@
 #
 # Overrides:
 #   BIN_DIR=~/bin            install the engine somewhere else
-#   OMASEND_VERSION=v0.1.0   pin a release instead of latest
 #   OMASEND_REPO=user/repo   download/register from a different repo
 set -euo pipefail
 
 REPO="${OMASEND_REPO:-28allday/omasend-quattro}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-BIN="$BIN_DIR/omasend-engine"
 PLUGIN_ID="nosignal.omasend"
 
 # Resolve the clone dir when run from one (empty when curl-piped).
@@ -40,37 +39,34 @@ say() { printf '%s\n' "$*"; }
 # ---- 1. engine binary ------------------------------------------------------
 mkdir -p "$BIN_DIR"
 
-if [ -n "$SCRIPT_DIR" ] && command -v go >/dev/null 2>&1; then
-  say "Building omasend-engine from source…"
-  (cd "$SCRIPT_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
-    -o "$BIN" ./cmd/omasend-engine)
+# Engine installation lives in bin/omasend-setup so that this script and the
+# plugin itself install the identical, version-pinned, checksum-verified
+# binary. Run from a clone we can use it directly; curl-piped we have no
+# checkout yet, so fetch the plugin first and run its copy.
+if [ -n "$SCRIPT_DIR" ] && [ -x "$SCRIPT_DIR/bin/omasend-setup" ]; then
+  BIN_DIR="$BIN_DIR" OMASEND_REPO="$REPO" "$SCRIPT_DIR/bin/omasend-setup"
+  PLUGIN_SRC="$SCRIPT_DIR"
 else
-  arch="$(uname -m)"
-  case "$arch" in
-    x86_64) asset="omasend-engine-linux-amd64" ;;
-    aarch64) asset="omasend-engine-linux-arm64" ;;
-    *) say "Unsupported architecture: $arch (build from a clone with Go instead)"; exit 1 ;;
-  esac
-  if [ -n "${OMASEND_VERSION:-}" ]; then
-    url="https://github.com/$REPO/releases/download/$OMASEND_VERSION/$asset"
-  else
-    url="https://github.com/$REPO/releases/latest/download/$asset"
-  fi
-  say "Downloading $url…"
-  curl -fsSL -o "$BIN.tmp" "$url"
-  chmod 755 "$BIN.tmp"
-  mv "$BIN.tmp" "$BIN"
+  PLUGIN_SRC=""   # resolved after the plugin is registered, below
 fi
-say "Engine installed: $BIN"
 
 # ---- 2. Omarchy quattro desktop integration --------------------------------
 if ! command -v omarchy-shell >/dev/null 2>&1 \
    && [ ! -x /usr/share/omarchy/bin/omarchy-shell ]; then
   say ""
-  say "No omarchy-shell found — engine installed, but the Omasend UI is an"
-  say "omarchy-shell (Omarchy 4) plugin and cannot run here. On a headless"
-  say "or pre-quattro box, use the original omarchy-send TUI instead:"
-  say "  https://github.com/28allday/omarchy-send"
+  if [ -n "$PLUGIN_SRC" ]; then
+    say "No omarchy-shell found — engine installed, but the Omasend UI is an"
+    say "omarchy-shell (Omarchy 4) plugin and cannot run here."
+  else
+    say "No omarchy-shell found, and nothing was installed: without a desktop"
+    say "there is no plugin to register, and the engine installs from a"
+    say "checkout so its binary can be checksum-verified. To run the engine"
+    say "headless, clone the repo and run its setup script:"
+    say "  git clone https://github.com/$REPO.git"
+    say "  cd omasend-quattro && bin/omasend-setup"
+  fi
+  say "On a headless or pre-quattro box, the original omarchy-send TUI is the"
+  say "better fit: https://github.com/28allday/omarchy-send"
   exit 0
 fi
 
@@ -93,6 +89,18 @@ if [ "$status" != "enabled" ]; then
 fi
 "$OMARCHY" plugin enable "$PLUGIN_ID" right 2>/dev/null \
   || say "Enable it from Setup › Plugins (or: omarchy plugin enable $PLUGIN_ID)"
+
+# Curl-piped runs had no checkout earlier; the registered plugin is one now, so
+# the engine still comes from a checkout with a committed checksum beside it.
+if [ -z "$PLUGIN_SRC" ]; then
+  PLUGIN_SRC="$(readlink -f "$HOME/.config/omarchy/plugins/$PLUGIN_ID" 2>/dev/null || echo "")"
+  if [ -n "$PLUGIN_SRC" ] && [ -x "$PLUGIN_SRC/bin/omasend-setup" ]; then
+    BIN_DIR="$BIN_DIR" OMASEND_REPO="$REPO" "$PLUGIN_SRC/bin/omasend-setup"
+  else
+    say "Could not find the registered plugin's setup script — install the"
+    say "engine by hand: <plugin dir>/bin/omasend-setup"
+  fi
+fi
 
 # ---- 3. zenity (graphical file chooser) ------------------------------------
 # The panel's "Send file/folder" buttons open a GTK chooser via zenity, which
@@ -132,18 +140,13 @@ gtk-update-icon-cache -q -t -f "$HOME/.local/share/icons/hicolor" 2>/dev/null ||
 if command -v nautilus >/dev/null 2>&1; then
   ext_dir="$HOME/.local/share/nautilus-python/extensions"
   mkdir -p "$ext_dir"
-  if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/nautilus/omasend.py" ]; then
-    cp "$SCRIPT_DIR/nautilus/omasend.py" "$ext_dir/omasend.py"
+  if [ -n "$PLUGIN_SRC" ] && [ -f "$PLUGIN_SRC/nautilus/omasend.py" ]; then
+    cp "$PLUGIN_SRC/nautilus/omasend.py" "$ext_dir/omasend.py"
     say "Nautilus right-click installed (Send via Omasend)."
   else
-    ext_url="https://raw.githubusercontent.com/$REPO/main/nautilus/omasend.py"
-    if curl -fsSL -o "$ext_dir/omasend.py.tmp" "$ext_url"; then
-      mv "$ext_dir/omasend.py.tmp" "$ext_dir/omasend.py"
-      say "Nautilus right-click installed (Send via Omasend)."
-    else
-      rm -f "$ext_dir/omasend.py.tmp"
-      say "Could not fetch $ext_url — skipped the Nautilus right-click entry."
-    fi
+    say "No plugin checkout to copy from — skipped the Nautilus right-click"
+    say "entry. Install it later with:"
+    say "  cp <plugin dir>/nautilus/omasend.py $ext_dir/"
   fi
   nautilus -q >/dev/null 2>&1 || true
 fi

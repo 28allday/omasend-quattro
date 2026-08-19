@@ -18,14 +18,34 @@ mode, so stock LocalSend apps see it as just another device.
 
 ## Quick start
 
-On an Omarchy 4 desktop, paste this into a terminal:
+On an Omarchy 4 desktop, add the plugin the standard way:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/28allday/omasend-quattro/main/install.sh | bash
+omarchy plugin add https://github.com/28allday/omasend-quattro.git --enable
 ```
 
-That's the whole install. When it finishes you'll have a paper-plane icon in
-the bar — click it and the panel opens on the Devices tab.
+Click the paper-plane icon in the bar to open the panel. Transfers are handled
+by a small companion binary — the engine — which a plugin install can't place
+on its own, so the first time you open the panel head to **Settings › Engine**
+and press **Set up engine**. That builds it from the source in the plugin's own
+checkout, or fetches the release pinned in `manifest.json` and checks its
+SHA-256 against `engine/SHA256SUMS` before installing it. Either way you get
+exactly the code you installed — nothing unpinned is pulled in.
+
+Prefer the terminal? The same script the button runs:
+
+```sh
+~/.config/omarchy/plugins/nosignal.omasend/bin/omasend-setup
+```
+
+There's also `install.sh` in the repo, which does the above plus the optional
+extras — the bar icon, the Nautilus right-click entry and zenity. Run it from a
+clone:
+
+```sh
+git clone https://github.com/28allday/omasend-quattro.git
+cd omasend-quattro && bash install.sh
+```
 
 Then, on the devices you want to talk to:
 
@@ -74,25 +94,33 @@ else; the engine is a single static binary with no runtime dependencies.
 
 ## Install details
 
-The one-liner from Quick start installs the transfer engine
-(`omasend-engine`, a single static binary in `~/.local/bin`), registers and
-enables the shell plugin, and adds the icon and the Nautilus right-click
-entry. It also installs [zenity](https://gitlab.gnome.org/GNOME/zenity) if
-it's missing (asks for sudo) — that's the graphical chooser behind the
-panel's "Send file/folder" buttons; without it they fall back to a typed-path
-prompt. It's safe to run again; `omarchy plugin update` keeps the plugin
-itself up to date.
+**Why there are two pieces.** The UI is pure QML and loads straight into the
+shell. The LocalSend protocol work — discovery, HTTPS transfers, PIN — lives in
+`omasend-engine`, a small Go daemon, because the shell can't load native code.
+`omarchy plugin add` installs the QML; the engine is a separate binary, so
+`bin/omasend-setup` places it.
 
-Prefer to build from source? Clone the repo and run the same script — with Go
-installed it builds the engine locally instead of downloading it:
+**Where the engine comes from.** `bin/omasend-setup` ships inside the plugin
+and only ever installs from the checkout it sits in:
 
-```sh
-git clone https://github.com/28allday/omasend-quattro.git
-cd omasend-quattro && bash install.sh
-```
+- **With Go installed** it compiles `./cmd/omasend-engine` from the source
+  beside it. Nothing is downloaded, so the binary is precisely the commit you
+  installed.
+- **Without Go** it downloads the release asset for the version pinned in
+  `manifest.json` — never `latest` — and refuses to install unless the SHA-256
+  matches `engine/SHA256SUMS`, which is committed in the repo. A mismatch
+  aborts and installs nothing.
 
-Overrides: `BIN_DIR=…` puts the engine somewhere else, `OMASEND_VERSION=v0.1.0`
-pins a release, `OMASEND_REPO=user/repo` installs from a fork.
+Overrides: `BIN_DIR=…` puts the engine somewhere else, `OMASEND_REPO=user/repo`
+uses a fork's releases. `bin/omasend-setup --check` reports what's installed
+without changing anything.
+
+**What `install.sh` adds.** Everything above plus the optional desktop extras:
+the bar icon, the Nautilus right-click entry (copied from the checkout), and
+[zenity](https://gitlab.gnome.org/GNOME/zenity) if it's missing (asks for
+sudo) — the graphical chooser behind the panel's "Send file/folder" buttons;
+without it they fall back to a typed-path prompt. It's safe to re-run, and
+`omarchy plugin update` keeps the plugin itself current.
 
 **Coming from omarchy-send?** Your identity survives: the first run migrates
 `~/.config/omarchy-send/config.json` — alias, PIN, receive folder and the TLS
@@ -192,14 +220,15 @@ TCP and UDP on your LAN.
 
 ## What it installs and writes
 
-Everything lands under your home directory — nothing is written system-wide,
-and nothing is touched without you running the installer:
+Everything lands under your home directory — nothing is written system-wide.
+`omarchy plugin add` writes only the first two rows; the rest arrive when you
+set up the engine, run `install.sh`, or start receiving:
 
 | Path | What goes there |
 | --- | --- |
-| `~/.local/bin/omasend-engine` | the transfer engine (single static binary) |
 | `~/.config/omarchy/plugins/nosignal.omasend/` | the plugin itself, cloned by `omarchy plugin add` |
 | `~/.config/omarchy/shell.json` | a `plugins[]` entry and a bar-layout entry, so the icon and panel load |
+| `~/.local/bin/omasend-engine` | the transfer engine, placed by `bin/omasend-setup` |
 | `~/.config/omasend/config.json` | your alias, PIN, receive folder, known remotes and TLS certificate |
 | `~/Omasend/` | received files (configurable in Settings) |
 | `~/.local/share/icons/hicolor/scalable/apps/` | the paper-plane icon |

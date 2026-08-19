@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# omasend-setup — install the omasend-engine binary for this plugin checkout.
+#
+# This script ships inside the plugin, so `omarchy plugin add` puts it on disk
+# alongside the manifest and the engine source. Everything it installs is bound
+# to the commit you have checked out:
+#
+#   * With Go available it builds the engine from the source in this checkout.
+#     Nothing is fetched, so the binary is exactly this commit's code.
+#   * Without Go it downloads the release asset for the version pinned in
+#     manifest.json — never "latest" — and refuses to install it unless the
+#     SHA-256 matches engine/SHA256SUMS, which is committed here.
+#
+# Usage:
+#   bin/omasend-setup            install the engine
+#   bin/omasend-setup --check    report what is installed, change nothing
+#
+# Overrides:
+#   BIN_DIR=~/bin                install somewhere other than ~/.local/bin
+#   OMASEND_REPO=user/repo       download from a fork's releases
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
+BIN="$BIN_DIR/omasend-engine"
+REPO="${OMASEND_REPO:-28allday/omasend-quattro}"
+SUMS="$ROOT/engine/SHA256SUMS"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'omasend-setup: %s\n' "$*" >&2; exit 1; }
+
+# The pinned version comes from the manifest, so the download can never drift
+# from the code that was reviewed alongside it.
+pinned_version() {
+  [ -f "$ROOT/manifest.json" ] || die "manifest.json not found in $ROOT"
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.version // empty' "$ROOT/manifest.json"
+  else
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/manifest.json" | head -1
+  fi
+}
+
+asset_name() {
+  case "$(uname -m)" in
+    x86_64)  echo "omasend-engine-linux-amd64" ;;
+    aarch64) echo "omasend-engine-linux-arm64" ;;
+    *)       die "unsupported architecture $(uname -m) — install Go and re-run to build from source" ;;
+  esac
+}
+
+if [ "${1:-}" = "--check" ]; then
+  if [ -x "$BIN" ]; then
+    say "engine: $BIN"
+    exit 0
+  fi
+  say "engine: not installed"
+  exit 1
+fi
+
+version="$(pinned_version)"
+[ -n "$version" ] || die "could not read the plugin version from manifest.json"
+mkdir -p "$BIN_DIR"
+
+if command -v go >/dev/null 2>&1 && [ -f "$ROOT/go.mod" ]; then
+  say "Building omasend-engine $version from source in $ROOT…"
+  (cd "$ROOT" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
+    -o "$BIN.tmp" ./cmd/omasend-engine)
+  chmod 755 "$BIN.tmp"
+  mv "$BIN.tmp" "$BIN"
+  say "Engine built and installed: $BIN"
+  exit 0
+fi
+
+# No Go: fall back to the pinned release asset, checksum-verified.
+asset="$(asset_name)"
+url="https://github.com/$REPO/releases/download/v$version/$asset"
+
+[ -f "$SUMS" ] || die "engine/SHA256SUMS is missing — refusing to install an unverified binary"
+want="$(awk -v a="$asset" '$2 == a || $2 == "*"a {print $1}' "$SUMS" | head -1)"
+[ -n "$want" ] || die "no SHA-256 recorded for $asset in engine/SHA256SUMS"
+
+say "Downloading pinned engine v$version ($asset)…"
+tmp="$BIN.download.$$"
+trap 'rm -f "$tmp"' EXIT
+curl -fsSL -o "$tmp" "$url" || die "download failed: $url"
+
+got="$(sha256sum "$tmp" | awk '{print $1}')"
+if [ "$got" != "$want" ]; then
+  die "checksum mismatch for $asset
+  expected $want
+  got      $got
+The download does not match the checksum committed in this checkout — nothing
+was installed. Report this, or install Go and re-run to build from source."
+fi
+
+chmod 755 "$tmp"
+mv "$tmp" "$BIN"
+trap - EXIT
+say "Engine installed and checksum-verified: $BIN"
