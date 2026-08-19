@@ -2,7 +2,8 @@
 #
 # Omasend installer — native Omarchy quattro shell plugin + engine.
 #
-#   curl -fsSL https://raw.githubusercontent.com/28allday/omasend-quattro/main/install.sh | bash
+# Run it from a clone (bash install.sh), or use the one-line install command
+# documented in the README.
 #
 # What it does:
 #   1. Installs the omasend-engine binary to ~/.local/bin (built from source
@@ -69,7 +70,7 @@ if ! command -v omarchy-shell >/dev/null 2>&1 \
   say "No omarchy-shell found — engine installed, but the Omasend UI is an"
   say "omarchy-shell (Omarchy 4) plugin and cannot run here. On a headless"
   say "or pre-quattro box, use the original omarchy-send TUI instead:"
-  say "  curl -fsSL https://raw.githubusercontent.com/28allday/omarchy-send/main/install.sh | bash"
+  say "  https://github.com/28allday/omarchy-send"
   exit 0
 fi
 
@@ -98,7 +99,7 @@ fi
 # is NOT in the Omarchy base install (some boxes only have it as a Steam
 # dependency). Without it the panel silently falls back to a typed-path
 # prompt, so make sure it's really here. sudo reads from /dev/tty so the
-# password prompt works under curl | bash; failure is non-fatal.
+# password prompt still works under a piped install; failure is non-fatal.
 if ! command -v zenity >/dev/null 2>&1; then
   say "Installing zenity (file chooser for panel sends — needs sudo)…"
   # shellcheck disable=SC2024  # stdin redirect is for sudo's own password prompt

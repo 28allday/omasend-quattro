@@ -67,6 +67,11 @@ pre-quattro box the panel can't run; use the original
 [omarchy-send](https://github.com/28allday/omarchy-send) terminal client
 there instead. Both speak the same protocol and happily talk to each other.
 
+External dependencies: `jq` (already in the Omarchy base install) and
+[zenity](https://gitlab.gnome.org/GNOME/zenity) for the panel's graphical
+file chooser — the installer offers to add zenity if it's missing. Nothing
+else; the engine is a single static binary with no runtime dependencies.
+
 ## Install details
 
 The one-liner from Quick start installs the transfer engine
@@ -185,13 +190,50 @@ standard port `53317` (TCP + UDP). Configuration lives in
 `~/.config/omasend/config.json`. If you run a firewall, allow `53317` for both
 TCP and UDP on your LAN.
 
+## What it installs and writes
+
+Everything lands under your home directory — nothing is written system-wide,
+and nothing is touched without you running the installer:
+
+| Path | What goes there |
+| --- | --- |
+| `~/.local/bin/omasend-engine` | the transfer engine (single static binary) |
+| `~/.config/omarchy/plugins/nosignal.omasend/` | the plugin itself, cloned by `omarchy plugin add` |
+| `~/.config/omarchy/shell.json` | a `plugins[]` entry and a bar-layout entry, so the icon and panel load |
+| `~/.config/omasend/config.json` | your alias, PIN, receive folder, known remotes and TLS certificate |
+| `~/Omasend/` | received files (configurable in Settings) |
+| `~/.local/share/icons/hicolor/scalable/apps/` | the paper-plane icon |
+| `~/.local/share/nautilus-python/extensions/omasend.py` | the "Send via Omasend" right-click entry |
+| `~/.claude/CLAUDE.md` | a delimited managed block telling AI agents how to send from scripts |
+
+Two of those are edits to files you may already own, so to be explicit about
+them: the `shell.json` entries are added with `jq` and leave the rest of the
+file untouched (the plugin re-adds its own `plugins[]` reference on first open
+if the shell dropped it — without that, removing the bar icon would kill the
+panel too); and the `CLAUDE.md` block sits between
+`<!-- BEGIN omasend -->` / `<!-- END omasend -->` markers, so re-running the
+installer replaces only that block and never the surrounding file. Neither is
+overwritten wholesale.
+
+The one privileged step is installing zenity — `sudo pacman -S zenity`, only
+if it isn't already present, and it's non-fatal if you decline. The engine
+listens on LocalSend's standard port `53317` (TCP + UDP) whenever the shell is
+running; that's the whole point of always-on receiving, and it's the only
+network listener.
+
 ## Uninstall
 
 ```sh
 omarchy plugin remove nosignal.omasend
 rm ~/.local/bin/omasend-engine
 rm ~/.local/share/nautilus-python/extensions/omasend.py
+rm ~/.local/share/icons/hicolor/scalable/apps/omasend.svg
+rm -rf ~/.config/omasend            # alias, PIN, pairing certificate
 ```
+
+That leaves received files in `~/Omasend` alone. The managed block in
+`~/.claude/CLAUDE.md` is delimited by its `BEGIN`/`END` markers if you want to
+delete it by hand.
 
 ## License
 
