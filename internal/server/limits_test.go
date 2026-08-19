@@ -220,3 +220,76 @@ func TestOverlongMessageIsNotEmitted(t *testing.T) {
 		t.Fatalf("normal message rejected: %q ok=%v", text, ok)
 	}
 }
+
+// TestDanglingSymlinkIsNotFollowed is the traversal guard at the file level: a
+// dangling symlink sitting at the destination name used to read as "free"
+// (os.Stat follows it), so the write went through the link to wherever it
+// pointed. The target must be left untouched.
+func TestDanglingSymlinkIsNotFollowed(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "victim.txt")
+
+	// A link named as the file we are about to receive, pointing outside.
+	if err := os.Symlink(outside, filepath.Join(dir, "note.txt")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	got, err := destPath(dir, "note.txt")
+	if err != nil {
+		t.Fatalf("destPath: %v", err)
+	}
+	if got == filepath.Join(dir, "note.txt") {
+		t.Fatalf("destPath handed back the symlink path %q", got)
+	}
+	if _, err := os.Lstat(outside); !os.IsNotExist(err) {
+		t.Fatalf("link target was created at %q", outside)
+	}
+}
+
+// TestSymlinkedSubdirIsRejected covers the folder-send case the lexical check
+// cannot see: "sub/file.txt" where sub is a link out of the receive dir.
+func TestSymlinkedSubdirIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(dir, "sub")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, err := destPath(dir, "sub/file.txt"); err == nil {
+		t.Fatalf("destPath accepted a path crossing a symlinked directory")
+	}
+
+	// The ordinary nested case must still work.
+	if _, err := destPath(dir, "real/file.txt"); err != nil {
+		t.Fatalf("destPath rejected a legitimate nested path: %v", err)
+	}
+}
+
+// TestWriteRefusesExistingSymlink proves the create itself is O_NOFOLLOW: even
+// if a link were planted between the destPath call and the open, the write
+// fails rather than following it.
+func TestWriteRefusesExistingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "victim.txt")
+	if err := os.Symlink(outside, filepath.Join(dir, "planted.txt.part")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	s := New(Options{Info: protocol.DeviceInfo{Alias: "recv"}, ReceiveDir: dir})
+	go func() {
+		for range s.Transfers() {
+		}
+	}()
+	sess, _ := s.sessions.create(protocol.DeviceInfo{Alias: "peer"}, "127.0.0.1",
+		map[string]protocol.FileMetadata{"f1": {ID: "f1", FileName: "planted.txt", Size: 4}})
+	fe := &fileEntry{meta: protocol.FileMetadata{ID: "f1", FileName: "planted.txt", Size: 4}}
+
+	if _, err := s.writeFile(sess, fe, "k", strings.NewReader("data")); err == nil {
+		if _, statErr := os.Lstat(outside); !os.IsNotExist(statErr) {
+			t.Fatalf("wrote through the planted symlink to %q", outside)
+		}
+	}
+	if _, err := os.Lstat(outside); !os.IsNotExist(err) {
+		t.Fatalf("link target was created at %q", outside)
+	}
+}

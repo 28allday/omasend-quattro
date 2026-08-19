@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"omasend/internal/dbg"
@@ -44,6 +45,38 @@ const (
 	// most of maxPrepareBody in the message channel.
 	maxMessageText = 64 << 10 // 64 KiB
 )
+
+// Deadlines. ReadHeaderTimeout on the Server covers the headers; these cover
+// the body, which is where a peer can otherwise dribble bytes forever.
+const (
+	// jsonReadTimeout is the whole-body deadline for the small JSON endpoints.
+	// None of them has any reason to take this long.
+	jsonReadTimeout = 15 * time.Second
+
+	// uploadStallTimeout is a stall deadline, not a total one: it is pushed
+	// forward every time bytes actually arrive. A legitimate transfer can run
+	// as long as it likes; a connection that simply stops sending is dropped.
+	uploadStallTimeout = 60 * time.Second
+)
+
+// setReadDeadline pushes the read deadline out by d. It is best-effort: a
+// connection type that cannot carry a deadline just leaves it unset.
+func setReadDeadline(w http.ResponseWriter, d time.Duration) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(d))
+}
+
+// stallGuard extends the read deadline whenever the peer makes progress, so a
+// slow-but-moving upload survives while an idle one is cut off.
+type stallGuard struct {
+	r       io.Reader
+	w       http.ResponseWriter
+	timeout time.Duration
+}
+
+func (g *stallGuard) Read(p []byte) (int, error) {
+	setReadDeadline(g.w, g.timeout)
+	return g.r.Read(p)
+}
 
 // Options configures a Server.
 type Options struct {
@@ -176,11 +209,13 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
+	setReadDeadline(w, jsonReadTimeout)
 	writeJSON(w, s.infoCopy())
 }
 
 // handleRegister records the calling peer and replies with our own info.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	setReadDeadline(w, jsonReadTimeout)
 	if s.opts.OnPeer != nil {
 		var info protocol.DeviceInfo
 		body := http.MaxBytesReader(w, r.Body, maxRegisterBody)
@@ -196,6 +231,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 // handlePrepareUpload asks the user to accept, then issues a session + tokens.
 func (s *Server) handlePrepareUpload(w http.ResponseWriter, r *http.Request) {
+	setReadDeadline(w, jsonReadTimeout)
 	var req protocol.PrepareUploadRequest
 	body := http.MaxBytesReader(w, r.Body, maxPrepareBody)
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
@@ -309,7 +345,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := sessionID + ":" + fileID
-	dest, err := s.writeFile(sess, fe, key, r.Body)
+	body := &stallGuard{r: r.Body, w: w, timeout: uploadStallTimeout}
+	dest, err := s.writeFile(sess, fe, key, body)
 	if err != nil {
 		s.transfers <- transfer.Event{Dir: transfer.Incoming, Kind: transfer.Error, ID: key, FileName: fe.meta.FileName, Err: err}
 		http.Error(w, "write failed", http.StatusInternalServerError)
@@ -335,7 +372,9 @@ func (s *Server) writeFile(sess *session, fe *fileEntry, key string, r io.Reader
 	}
 	tmp := dest + ".part"
 
-	f, err := os.Create(tmp)
+	// O_EXCL|O_NOFOLLOW: never write through a symlink or into a file someone
+	// else placed at this path between uniqueAt and here.
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return "", err
 	}
@@ -379,6 +418,7 @@ func (s *Server) writeFile(sess *session, fe *fileEntry, key string, r io.Reader
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	setReadDeadline(w, jsonReadTimeout)
 	sessionID := r.URL.Query().Get("sessionId")
 	s.sessions.cancel(sessionID)
 	s.transfers <- transfer.Event{Dir: transfer.Incoming, Kind: transfer.Cancel, ID: sessionID}
@@ -402,13 +442,39 @@ func destPath(dir, name string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return "", err
 	}
+	// The check above is lexical, so it cannot see a symlink standing in for
+	// one of the directories we just walked through — a folder send whose
+	// path crosses a link would land outside the receive dir entirely. Resolve
+	// both sides and confirm containment for real before handing back a path.
+	if err := confirmInside(dir, filepath.Dir(full)); err != nil {
+		return "", err
+	}
 	return uniqueAt(full), nil
+}
+
+// confirmInside reports whether child, with every symlink resolved, is still
+// dir or below it.
+func confirmInside(dir, child string) error {
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("receive dir %q: %w", dir, err)
+	}
+	realChild, err := filepath.EvalSymlinks(child)
+	if err != nil {
+		return fmt.Errorf("destination %q: %w", child, err)
+	}
+	if realChild != realDir && !strings.HasPrefix(realChild, realDir+string(os.PathSeparator)) {
+		return fmt.Errorf("destination %q resolves outside the receive dir", child)
+	}
+	return nil
 }
 
 // uniqueAt returns full if free, otherwise inserts " (n)" before the extension
 // until it finds an unused name in the same directory.
 func uniqueAt(full string) string {
-	if _, err := os.Stat(full); os.IsNotExist(err) {
+	// Lstat, not Stat: a dangling symlink must count as occupied, or we would
+	// hand back its path and write through the link to wherever it points.
+	if _, err := os.Lstat(full); os.IsNotExist(err) {
 		return full
 	}
 	d := filepath.Dir(full)
@@ -417,7 +483,7 @@ func uniqueAt(full string) string {
 	stem := base[:len(base)-len(ext)]
 	for i := 1; ; i++ {
 		cand := filepath.Join(d, fmt.Sprintf("%s (%d)%s", stem, i, ext))
-		if _, err := os.Stat(cand); os.IsNotExist(err) {
+		if _, err := os.Lstat(cand); os.IsNotExist(err) {
 			return cand
 		}
 	}

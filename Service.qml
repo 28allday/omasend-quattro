@@ -194,9 +194,15 @@ Item {
       "omasend-setup-launch", root.pluginDir]
     stderr: StdioCollector {
       onStreamFinished: {
+        // First line, not last: setup failures lead with the reason and then
+        // spend several lines on what to do about it.
         var lines = String(text || "").trim().split("\n")
-        if (lines.length && lines[lines.length - 1] !== "")
-          root.engineSetupError = lines[lines.length - 1]
+        for (var i = 0; i < lines.length; i++) {
+          if (lines[i].trim() !== "") {
+            root.engineSetupError = lines[i].replace(/^omasend-setup: /, "")
+            break
+          }
+        }
       }
     }
     onExited: function(code) {

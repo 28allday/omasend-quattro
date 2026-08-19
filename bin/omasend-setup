@@ -3,22 +3,26 @@
 # omasend-setup — install the omasend-engine binary for this plugin checkout.
 #
 # This script ships inside the plugin, so `omarchy plugin add` puts it on disk
-# alongside the manifest and the engine source. Everything it installs is bound
-# to the commit you have checked out:
+# alongside the manifest and the engine source. It builds the engine from that
+# source, so what you run is exactly the code you can read in this checkout —
+# nothing is downloaded and there is no opaque binary to trust.
 #
-#   * With Go available it builds the engine from the source in this checkout.
-#     Nothing is fetched, so the binary is exactly this commit's code.
-#   * Without Go it downloads the release asset for the version pinned in
-#     manifest.json — never "latest" — and refuses to install it unless the
-#     SHA-256 matches engine/SHA256SUMS, which is committed here.
+# Building needs Go. Without it the script stops and explains rather than
+# quietly fetching a prebuilt binary; see OMASEND_ALLOW_PREBUILT below if you
+# would rather have the release asset than the Go toolchain.
 #
 # Usage:
-#   bin/omasend-setup            install the engine
+#   bin/omasend-setup            build and install the engine
 #   bin/omasend-setup --check    report what is installed, change nothing
 #
 # Overrides:
 #   BIN_DIR=~/bin                install somewhere other than ~/.local/bin
 #   OMASEND_REPO=user/repo       download from a fork's releases
+#   OMASEND_ALLOW_PREBUILT=1     opt in to the pinned release binary instead of
+#                                building. Still refuses anything whose SHA-256
+#                                misses engine/SHA256SUMS, but a prebuilt binary
+#                                cannot be audited from this tree — which is why
+#                                it is off by default.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -72,7 +76,25 @@ if command -v go >/dev/null 2>&1 && [ -f "$ROOT/go.mod" ]; then
   exit 0
 fi
 
-# No Go: fall back to the pinned release asset, checksum-verified.
+# No Go. Building is the only path that is auditable from this checkout, so
+# stop here unless the user has explicitly chosen otherwise.
+if [ "${OMASEND_ALLOW_PREBUILT:-}" != "1" ]; then
+  die "Go is required to build the engine, and it is not installed.
+
+The engine is built from the source in this checkout so that what runs is
+exactly the code you can read here. Either install Go and re-run:
+
+  sudo pacman -S go
+  $0
+
+or, if you would rather not install a toolchain, opt in to the prebuilt
+release binary — pinned to v$version and checked against engine/SHA256SUMS,
+but not something you can audit from this tree:
+
+  OMASEND_ALLOW_PREBUILT=1 $0"
+fi
+
+say "Using the prebuilt release binary at your request (OMASEND_ALLOW_PREBUILT=1)."
 asset="$(asset_name)"
 url="https://github.com/$REPO/releases/download/v$version/$asset"
 

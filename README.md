@@ -27,10 +27,12 @@ omarchy plugin add https://github.com/28allday/omasend-quattro.git --enable
 Click the paper-plane icon in the bar to open the panel. Transfers are handled
 by a small companion binary — the engine — which a plugin install can't place
 on its own, so the first time you open the panel head to **Settings › Engine**
-and press **Set up engine**. That builds it from the source in the plugin's own
-checkout, or fetches the release pinned in `manifest.json` and checks its
-SHA-256 against `engine/SHA256SUMS` before installing it. Either way you get
-exactly the code you installed — nothing unpinned is pulled in.
+and press **Set up engine**.
+
+That compiles the engine from the source sitting in the plugin's own checkout,
+which needs Go (`sudo pacman -S go`). It's a deliberate choice: the thing that
+listens on your network is built from code you can read in the same directory,
+rather than a binary you have to take on trust.
 
 Prefer the terminal? The same script the button runs:
 
@@ -87,10 +89,11 @@ pre-quattro box the panel can't run; use the original
 [omarchy-send](https://github.com/28allday/omarchy-send) terminal client
 there instead. Both speak the same protocol and happily talk to each other.
 
-External dependencies: `jq` (already in the Omarchy base install) and
+External dependencies: `jq` (already in the Omarchy base install), Go to build
+the engine (`sudo pacman -S go`), and
 [zenity](https://gitlab.gnome.org/GNOME/zenity) for the panel's graphical
-file chooser — the installer offers to add zenity if it's missing. Nothing
-else; the engine is a single static binary with no runtime dependencies.
+file chooser — the installer offers to add zenity if it's missing. Nothing at
+runtime: the engine is a single static binary with no dependencies once built.
 
 ## Install details
 
@@ -101,15 +104,23 @@ shell. The LocalSend protocol work — discovery, HTTPS transfers, PIN — lives
 `bin/omasend-setup` places it.
 
 **Where the engine comes from.** `bin/omasend-setup` ships inside the plugin
-and only ever installs from the checkout it sits in:
+and builds `./cmd/omasend-engine` from the source beside it. Nothing is
+downloaded, so the running binary is precisely the commit you installed, and
+you can audit it without leaving the directory.
 
-- **With Go installed** it compiles `./cmd/omasend-engine` from the source
-  beside it. Nothing is downloaded, so the binary is precisely the commit you
-  installed.
-- **Without Go** it downloads the release asset for the version pinned in
-  `manifest.json` — never `latest` — and refuses to install unless the SHA-256
-  matches `engine/SHA256SUMS`, which is committed in the repo. A mismatch
-  aborts and installs nothing.
+That needs Go. Without it the script stops and says so rather than quietly
+fetching something prebuilt. If you'd rather not install a toolchain, you can
+opt in explicitly:
+
+```sh
+OMASEND_ALLOW_PREBUILT=1 bin/omasend-setup
+```
+
+That downloads the release pinned in `manifest.json` — never `latest` — and
+installs it only if the SHA-256 matches `engine/SHA256SUMS`, committed in this
+repo; a mismatch aborts and installs nothing. It's off by default because a
+prebuilt binary can't be checked against the source in front of you, however
+well pinned it is.
 
 Overrides: `BIN_DIR=…` puts the engine somewhere else, `OMASEND_REPO=user/repo`
 uses a fork's releases. `bin/omasend-setup --check` reports what's installed
