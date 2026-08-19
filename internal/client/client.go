@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"omasend/internal/dbg"
 	"omasend/internal/discovery"
 	"omasend/internal/protocol"
+	"omasend/internal/security"
 	"omasend/internal/transfer"
 	"omasend/internal/tsproxy"
 )
@@ -48,6 +50,13 @@ type Sender struct {
 	http   *http.Client
 	events chan transfer.Event
 	active map[string]*inflight // in-flight sends keyed by peer IP
+
+	// One client per peer fingerprint. LocalSend certificates are self-signed,
+	// so chain validation can never apply; what identifies a peer is the
+	// fingerprint it advertises. Pinning to it means an on-path attacker with
+	// its own certificate cannot stand in for the device you picked and
+	// collect the files, message text or PIN meant for it.
+	pinned map[string]*http.Client
 }
 
 // New returns a Sender advertising self. TLS chain validation is disabled (we
@@ -73,7 +82,50 @@ func New(self protocol.DeviceInfo) *Sender {
 		},
 		events: make(chan transfer.Event, 256),
 		active: make(map[string]*inflight),
+		pinned: make(map[string]*http.Client),
 	}
+}
+
+// clientFor returns an HTTP client that will only complete a TLS handshake
+// with a peer presenting the given fingerprint. An empty fingerprint (a plain
+// http peer, or one we have not yet identified) falls back to the unpinned
+// client — there is nothing to pin to yet.
+func (s *Sender) clientFor(fingerprint string) *http.Client {
+	want := strings.ToUpper(strings.TrimSpace(fingerprint))
+	if want == "" {
+		return s.http
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.pinned[want]; ok {
+		return c
+	}
+	c := &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			Proxy: tsproxy.ProxyFunc,
+			TLSClientConfig: &tls.Config{
+				// Still no chain validation — these are self-signed by design.
+				// The fingerprint check below is what authenticates the peer.
+				InsecureSkipVerify: true,
+				VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+					if len(rawCerts) == 0 {
+						return fmt.Errorf("peer presented no certificate")
+					}
+					got := security.Fingerprint(rawCerts[0])
+					if got != want {
+						return fmt.Errorf("peer fingerprint mismatch: expected %s, got %s", want, got)
+					}
+					return nil
+				},
+			},
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+	}
+	s.pinned[want] = c
+	return c
 }
 
 // Events returns the outgoing-transfer event channel.
@@ -133,7 +185,7 @@ func (s *Sender) SendMessageSync(peer discovery.Peer, text, pin string) error {
 			Preview:  text,
 		},
 	}
-	_, err := s.prepareUpload(ctx, s.url(peer), files, pin)
+	_, err := s.prepareUpload(ctx, s.clientFor(peer.Info.Fingerprint), s.url(peer), files, pin)
 	return err
 }
 
@@ -172,7 +224,8 @@ func (s *Sender) SendFilesSync(ctx context.Context, peer discovery.Peer, paths [
 	}
 
 	base := s.url(peer)
-	prepResp, err := s.prepareUpload(ctx, base, files, pin)
+	hc := s.clientFor(peer.Info.Fingerprint)
+	prepResp, err := s.prepareUpload(ctx, hc, base, files, pin)
 	if err != nil {
 		return err
 	}
@@ -184,7 +237,7 @@ func (s *Sender) SendFilesSync(ctx context.Context, peer discovery.Peer, paths [
 	for id, token := range prepResp.Files {
 		meta := files[id]
 		key := prepResp.SessionID + ":" + id
-		if err := s.uploadFile(ctx, base, prepResp.SessionID, id, token, key, pathByID[id], meta); err != nil {
+		if err := s.uploadFile(ctx, hc, base, prepResp.SessionID, id, token, key, pathByID[id], meta); err != nil {
 			// A failure to open a local file is specific to that file (it
 			// vanished or lost permissions since staging) — skip it and keep
 			// the batch going, like the TUI path does. Anything else means the
@@ -255,7 +308,8 @@ func (s *Sender) send(peer discovery.Peer, paths []string, pin string) {
 		dbg.Logf("SEND prepare-upload to %s: files=%s", peer.IP, string(meta))
 	}
 	base := s.url(peer)
-	prepResp, err := s.prepareUpload(ctx, base, files, pin)
+	hc := s.clientFor(peer.Info.Fingerprint)
+	prepResp, err := s.prepareUpload(ctx, hc, base, files, pin)
 	if err != nil {
 		dbg.Logf("send prepare-upload to %s failed: %v", peer.IP, err)
 		if errors.Is(err, transfer.ErrPinRequired) {
@@ -280,7 +334,7 @@ func (s *Sender) send(peer discovery.Peer, paths []string, pin string) {
 			continue
 		}
 
-		err := s.uploadFile(ctx, base, prepResp.SessionID, id, token, key, pathByID[id], meta)
+		err := s.uploadFile(ctx, hc, base, prepResp.SessionID, id, token, key, pathByID[id], meta)
 		if err == nil {
 			s.emit(transfer.Event{Dir: transfer.Outgoing, Kind: transfer.FileDone, ID: key, FileName: meta.FileName, Received: meta.Size, Total: meta.Size})
 			continue
@@ -351,7 +405,7 @@ func (s *Sender) expand(paths []string) []fileItem {
 	return items
 }
 
-func (s *Sender) prepareUpload(ctx context.Context, base string, files map[string]protocol.FileMetadata, pin string) (protocol.PrepareUploadResponse, error) {
+func (s *Sender) prepareUpload(ctx context.Context, hc *http.Client, base string, files map[string]protocol.FileMetadata, pin string) (protocol.PrepareUploadResponse, error) {
 	reqBody, _ := json.Marshal(protocol.PrepareUploadRequest{Info: s.selfCopy(), Files: files})
 	url := base + protocol.PathPrepareUpload
 	if pin != "" {
@@ -362,7 +416,7 @@ func (s *Sender) prepareUpload(ctx context.Context, base string, files map[strin
 		return protocol.PrepareUploadResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return protocol.PrepareUploadResponse{}, err
 	}
@@ -388,7 +442,7 @@ func (s *Sender) prepareUpload(ctx context.Context, base string, files map[strin
 	return pr, nil
 }
 
-func (s *Sender) uploadFile(ctx context.Context, base, sessionID, fileID, token, key, path string, meta protocol.FileMetadata) error {
+func (s *Sender) uploadFile(ctx context.Context, hc *http.Client, base, sessionID, fileID, token, key, path string, meta protocol.FileMetadata) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errOpen, err)
@@ -413,7 +467,7 @@ func (s *Sender) uploadFile(ctx context.Context, base, sessionID, fileID, token,
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = meta.Size
 
-	resp, err := s.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return err
 	}

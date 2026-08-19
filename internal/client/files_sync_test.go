@@ -93,7 +93,7 @@ func TestSendFilesSyncMissingPath(t *testing.T) {
 func TestSendFilesSyncPinRequired(t *testing.T) {
 	recvDir := t.TempDir()
 	recvInfo := protocol.DeviceInfo{
-		Alias: "recv", Version: protocol.ProtocolVersion, Port: 53994, Protocol: "http",
+		Alias: "recv", Version: protocol.ProtocolVersion, Port: 53970, Protocol: "http",
 	}
 	srv := server.New(server.Options{Info: recvInfo, ReceiveDir: recvDir, AutoAccept: true, PIN: "2468"})
 	ctx, cancel := context.WithCancel(context.Background())

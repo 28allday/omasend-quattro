@@ -271,7 +271,12 @@ func (s *Server) handlePrepareUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, tokens := s.sessions.create(req.Info, clientIP(r), req.Files)
+	sess, tokens, err := s.sessions.create(req.Info, clientIP(r), req.Files)
+	if err != nil {
+		dbg.Logf("prepare-upload from %s: %v", clientIP(r), err)
+		http.Error(w, "too many pending sessions", http.StatusTooManyRequests)
+		return
+	}
 	writeJSON(w, protocol.PrepareUploadResponse{SessionID: sess.id, Files: tokens})
 }
 
@@ -343,6 +348,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+
+	s.sessions.beginUpload(sessionID)
+	defer s.sessions.endUpload(sessionID)
 
 	key := sessionID + ":" + fileID
 	body := &stallGuard{r: r.Body, w: w, timeout: uploadStallTimeout}

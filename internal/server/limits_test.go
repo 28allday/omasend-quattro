@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -280,7 +281,7 @@ func TestWriteRefusesExistingSymlink(t *testing.T) {
 		for range s.Transfers() {
 		}
 	}()
-	sess, _ := s.sessions.create(protocol.DeviceInfo{Alias: "peer"}, "127.0.0.1",
+	sess, _, _ := s.sessions.create(protocol.DeviceInfo{Alias: "peer"}, "127.0.0.1",
 		map[string]protocol.FileMetadata{"f1": {ID: "f1", FileName: "planted.txt", Size: 4}})
 	fe := &fileEntry{meta: protocol.FileMetadata{ID: "f1", FileName: "planted.txt", Size: 4}}
 
@@ -291,5 +292,89 @@ func TestWriteRefusesExistingSymlink(t *testing.T) {
 	}
 	if _, err := os.Lstat(outside); !os.IsNotExist(err) {
 		t.Fatalf("link target was created at %q", outside)
+	}
+}
+
+// TestSessionsAreBounded is the auto-accept case the review raised: a peer that
+// calls prepare-upload over and over and never uploads must not be able to
+// accumulate metadata maps without limit.
+func TestSessionsAreBounded(t *testing.T) {
+	store := newSessionStore()
+	files := map[string]protocol.FileMetadata{
+		"f1": {ID: "f1", FileName: "a.bin", Size: 1},
+	}
+	peer := protocol.DeviceInfo{Alias: "greedy", Fingerprint: "greedy00"}
+
+	for i := 0; i < maxSessions; i++ {
+		if _, _, err := store.create(peer, "127.0.0.1", files); err != nil {
+			t.Fatalf("session %d refused early: %v", i, err)
+		}
+	}
+	if _, _, err := store.create(peer, "127.0.0.1", files); !errors.Is(err, ErrTooManySessions) {
+		t.Fatalf("session past the cap was accepted (err=%v)", err)
+	}
+}
+
+// TestIdleSessionsExpire proves the cap cannot be reached by abandoned
+// sessions alone — they age out and the slot comes back.
+func TestIdleSessionsExpire(t *testing.T) {
+	store := newSessionStore()
+	files := map[string]protocol.FileMetadata{"f1": {ID: "f1", FileName: "a.bin", Size: 1}}
+	peer := protocol.DeviceInfo{Alias: "quiet", Fingerprint: "quiet000"}
+
+	sess, _, err := store.create(peer, "127.0.0.1", files)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Backdate it past the TTL, as an abandoned session would be.
+	store.mu.Lock()
+	store.sessions[sess.id].lastUsed = time.Now().Add(-2 * sessionTTL)
+	store.mu.Unlock()
+
+	store.sweep()
+
+	store.mu.Lock()
+	n := len(store.sessions)
+	store.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("idle session survived the sweep (%d left)", n)
+	}
+}
+
+// TestBusySessionSurvivesSweep is the guard on the guard: a long upload must
+// never have its session expired out from under it.
+func TestBusySessionSurvivesSweep(t *testing.T) {
+	store := newSessionStore()
+	files := map[string]protocol.FileMetadata{"f1": {ID: "f1", FileName: "big.bin", Size: 1}}
+	sess, _, err := store.create(protocol.DeviceInfo{Alias: "slow"}, "127.0.0.1", files)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	store.beginUpload(sess.id)
+	store.mu.Lock()
+	store.sessions[sess.id].lastUsed = time.Now().Add(-10 * sessionTTL)
+	store.mu.Unlock()
+
+	store.sweep()
+
+	store.mu.Lock()
+	_, alive := store.sessions[sess.id]
+	store.mu.Unlock()
+	if !alive {
+		t.Fatalf("a session with an upload in flight was expired")
+	}
+
+	// Once the upload finishes it becomes eligible again.
+	store.endUpload(sess.id)
+	store.mu.Lock()
+	store.sessions[sess.id].lastUsed = time.Now().Add(-10 * sessionTTL)
+	store.mu.Unlock()
+	store.sweep()
+	store.mu.Lock()
+	_, stillAlive := store.sessions[sess.id]
+	store.mu.Unlock()
+	if stillAlive {
+		t.Fatalf("session survived the sweep after its upload ended")
 	}
 }
