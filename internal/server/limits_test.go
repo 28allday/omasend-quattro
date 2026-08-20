@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -346,12 +348,14 @@ func TestIdleSessionsExpire(t *testing.T) {
 func TestBusySessionSurvivesSweep(t *testing.T) {
 	store := newSessionStore()
 	files := map[string]protocol.FileMetadata{"f1": {ID: "f1", FileName: "big.bin", Size: 1}}
-	sess, _, err := store.create(protocol.DeviceInfo{Alias: "slow"}, "127.0.0.1", files)
+	sess, tokens, err := store.create(protocol.DeviceInfo{Alias: "slow"}, "127.0.0.1", files)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	store.beginUpload(sess.id)
+	if _, _, ok := store.claim(sess.id, "f1", tokens["f1"]); !ok {
+		t.Fatalf("claim refused a fresh token")
+	}
 	store.mu.Lock()
 	store.sessions[sess.id].lastUsed = time.Now().Add(-10 * sessionTTL)
 	store.mu.Unlock()
@@ -366,7 +370,7 @@ func TestBusySessionSurvivesSweep(t *testing.T) {
 	}
 
 	// Once the upload finishes it becomes eligible again.
-	store.endUpload(sess.id)
+	store.endUpload(sess.id, "f1")
 	store.mu.Lock()
 	store.sessions[sess.id].lastUsed = time.Now().Add(-10 * sessionTTL)
 	store.mu.Unlock()
@@ -376,5 +380,167 @@ func TestBusySessionSurvivesSweep(t *testing.T) {
 	store.mu.Unlock()
 	if stillAlive {
 		t.Fatalf("session survived the sweep after its upload ended")
+	}
+}
+
+// TestCompletedFileTokenIsSingleUse is the replay case from review round four:
+// once a file has been received, its token must be dead — while pending
+// sibling files keep the session alive, re-presenting the same
+// sessionId/fileId/token triple must not deposit another copy.
+func TestCompletedFileTokenIsSingleUse(t *testing.T) {
+	base, dir := startTestServer(t, 53985, true)
+
+	prep := protocol.PrepareUploadRequest{
+		Info: protocol.DeviceInfo{Alias: "replay", Fingerprint: "replay00", Version: "2.1"},
+		Files: map[string]protocol.FileMetadata{
+			"f1": {ID: "f1", FileName: "first.txt", Size: 5, FileType: "text/plain"},
+			"f2": {ID: "f2", FileName: "second.txt", Size: 5, FileType: "text/plain"},
+		},
+	}
+	body, _ := json.Marshal(prep)
+	resp, err := http.Post(base+protocol.PathPrepareUpload, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("prepare-upload: %v", err)
+	}
+	var pr protocol.PrepareUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+		t.Fatalf("decode prepare response: %v", err)
+	}
+	resp.Body.Close()
+
+	url := base + protocol.PathUpload + "?sessionId=" + pr.SessionID + "&fileId=f1&token=" + pr.Files["f1"]
+	up, err := http.Post(url, "application/octet-stream", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	up.Body.Close()
+	if up.StatusCode != http.StatusOK {
+		t.Fatalf("first upload: status = %d, want 200", up.StatusCode)
+	}
+
+	// f2 is still pending, so the session is alive. Replay f1.
+	again, err := http.Post(url, "application/octet-stream", strings.NewReader("again"))
+	if err != nil {
+		t.Fatalf("replay upload: %v", err)
+	}
+	again.Body.Close()
+	if again.StatusCode != http.StatusForbidden {
+		t.Fatalf("replayed token: status = %d, want 403", again.StatusCode)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read receive dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "first.txt" {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("receive dir = %v, want exactly [first.txt]", names)
+	}
+}
+
+// TestFailedUploadTokenIsRetryable pins down what single-use must NOT break:
+// an upload that fails does not consume the token, so the sender's legitimate
+// retry of that file still goes through.
+func TestFailedUploadTokenIsRetryable(t *testing.T) {
+	base, dir := startTestServer(t, 53986, true)
+
+	prep := protocol.PrepareUploadRequest{
+		Info: protocol.DeviceInfo{Alias: "retrier", Fingerprint: "retry000", Version: "2.1"},
+		Files: map[string]protocol.FileMetadata{
+			"f1": {ID: "f1", FileName: "hello.txt", Size: 5, FileType: "text/plain"},
+		},
+	}
+	body, _ := json.Marshal(prep)
+	resp, err := http.Post(base+protocol.PathPrepareUpload, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("prepare-upload: %v", err)
+	}
+	var pr protocol.PrepareUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+		t.Fatalf("decode prepare response: %v", err)
+	}
+	resp.Body.Close()
+
+	// First attempt overruns the declared size and is refused.
+	url := base + protocol.PathUpload + "?sessionId=" + pr.SessionID + "&fileId=f1&token=" + pr.Files["f1"]
+	bad, err := http.Post(url, "application/octet-stream", strings.NewReader("far too many bytes"))
+	if err != nil {
+		t.Fatalf("oversized upload: %v", err)
+	}
+	bad.Body.Close()
+	if bad.StatusCode == http.StatusOK {
+		t.Fatalf("oversized upload was accepted")
+	}
+
+	// The retry with the honest body must still be claimable.
+	good, err := http.Post(url, "application/octet-stream", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("retry upload: %v", err)
+	}
+	good.Body.Close()
+	if good.StatusCode != http.StatusOK {
+		t.Fatalf("retry after failure: status = %d, want 200", good.StatusCode)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "hello.txt"))
+	if err != nil {
+		t.Fatalf("read received file: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Fatalf("content = %q, want %q", got, "hello")
+	}
+}
+
+// TestClaimIsExclusiveWhileInFlight closes the concurrent flavour of the
+// replay: two simultaneous uploads of the same file get one claim between
+// them, and the claim comes back only if the upload fails.
+func TestClaimIsExclusiveWhileInFlight(t *testing.T) {
+	store := newSessionStore()
+	files := map[string]protocol.FileMetadata{"f1": {ID: "f1", FileName: "a.bin", Size: 1}}
+	sess, tokens, err := store.create(protocol.DeviceInfo{Alias: "dup"}, "127.0.0.1", files)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, _, ok := store.claim(sess.id, "f1", tokens["f1"]); !ok {
+		t.Fatalf("first claim refused")
+	}
+	if _, _, ok := store.claim(sess.id, "f1", tokens["f1"]); ok {
+		t.Fatalf("second claim granted while the first was in flight")
+	}
+	store.endUpload(sess.id, "f1") // upload failed: claim released, not done
+	if _, _, ok := store.claim(sess.id, "f1", tokens["f1"]); !ok {
+		t.Fatalf("claim refused after a failed upload released it")
+	}
+}
+
+// TestSessionCapSurvivesParallelPrepares hammers create from many goroutines:
+// with the check and the insert in separate critical sections, several
+// prepares could pass the check together and land past the cap.
+func TestSessionCapSurvivesParallelPrepares(t *testing.T) {
+	store := newSessionStore()
+	files := map[string]protocol.FileMetadata{"f1": {ID: "f1", FileName: "a.bin", Size: 1}}
+	peer := protocol.DeviceInfo{Alias: "horde", Fingerprint: "horde000"}
+
+	var wg sync.WaitGroup
+	var accepted atomic.Int64
+	for i := 0; i < 4*maxSessions; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, err := store.create(peer, "127.0.0.1", files); err == nil {
+				accepted.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	store.mu.Lock()
+	n := len(store.sessions)
+	store.mu.Unlock()
+	if got := accepted.Load(); got != maxSessions || n != maxSessions {
+		t.Fatalf("accepted %d sessions, %d held; want exactly %d", got, n, maxSessions)
 	}
 }

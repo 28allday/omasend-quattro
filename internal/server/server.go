@@ -343,14 +343,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	sessionID, fileID, token := q.Get("sessionId"), q.Get("fileId"), q.Get("token")
 
-	sess, fe, ok := s.sessions.lookup(sessionID, fileID, token)
+	sess, fe, ok := s.sessions.claim(sessionID, fileID, token)
 	if !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-
-	s.sessions.beginUpload(sessionID)
-	defer s.sessions.endUpload(sessionID)
+	defer s.sessions.endUpload(sessionID, fileID)
 
 	key := sessionID + ":" + fileID
 	body := &stallGuard{r: r.Body, w: w, timeout: uploadStallTimeout}

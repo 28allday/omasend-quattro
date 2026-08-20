@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "nosignal.omasend",
   "name": "Omasend",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "author": "Gavin Nugent",
   "license": "MIT",
   "description": "LocalSend-compatible file transfer and messaging, native to the shell: discover devices on the LAN or tailnet, send files and messages, and receive them whenever the shell is running — no app open required. Summon with: omarchy-shell shell toggle nosignal.omasend",
