@@ -602,21 +602,108 @@ func (e *engine) serveClient(ctx context.Context, conn net.Conn) {
 
 // ---------------------------------------------------------------- main
 
-// socketPath returns the default control-socket path for this user.
-func socketPath() string {
+// socketPath returns the default control-socket path for this user. The
+// socket must live in a directory only this user can reach: a predictable
+// name in a shared directory like /tmp can be pre-created by another local
+// user, whose fake engine would then receive every PIN, path and message
+// the shell sends. XDG_RUNTIME_DIR is per-user 0700 by contract; without
+// it the fallback is a 0700 directory under the user's own home — never
+// /tmp, and if no private place can be established the engine refuses to
+// start rather than degrade.
+func socketPath() (string, error) {
 	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return filepath.Join(dir, "omasend.sock")
+		return filepath.Join(dir, "omasend.sock"), nil
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("omasend-%d.sock", os.Getuid()))
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("no XDG_RUNTIME_DIR and no home directory: %w (pass --socket explicitly)", err)
+	}
+	dir := filepath.Join(home, ".local", "state", "omasend")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("socket dir: %w", err)
+	}
+	// MkdirAll leaves an existing directory's mode alone and follows a
+	// symlinked final component, so verify what is actually there: a real
+	// directory, owned by this user, no access for anyone else.
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("socket dir: %w", err)
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("socket dir %s is not a directory", dir)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Getuid()) {
+		return "", fmt.Errorf("socket dir %s is not owned by uid %d", dir, os.Getuid())
+	}
+	if fi.Mode().Perm() != 0o700 {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return "", fmt.Errorf("socket dir: %w", err)
+		}
+	}
+	return filepath.Join(dir, "omasend.sock"), nil
+}
+
+// prepareSocket clears a stale socket file left by a crashed engine, but
+// never one a live engine is serving: it dials first, and only a refused
+// connection is treated as stale. Both paths this runs on are private to
+// the user, so the remove cannot be steered by anyone else.
+func prepareSocket(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil // nothing there — the normal case
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("%s exists and is not a socket — refusing to remove it", path)
+	}
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err == nil {
+		conn.Close()
+		return fmt.Errorf("another engine is already serving %s", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("stale socket: %w", err)
+	}
+	return nil
+}
+
+// sameUser reports whether the peer on a unix-socket connection is this
+// same uid (or root). The private socket directory already gates access;
+// this closes the door independently of any directory-permission mistake.
+func sameUser(conn net.Conn) bool {
+	uc, ok := conn.(*net.UnixConn)
+	if !ok {
+		return false
+	}
+	raw, err := uc.SyscallConn()
+	if err != nil {
+		return false
+	}
+	var cred *syscall.Ucred
+	var cerr error
+	if err := raw.Control(func(fd uintptr) {
+		cred, cerr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+	}); err != nil || cerr != nil || cred == nil {
+		return false
+	}
+	return cred.Uid == uint32(os.Getuid()) || cred.Uid == 0
 }
 
 func main() {
 	var (
-		sockFlag = flag.String("socket", socketPath(), "control socket path")
+		sockFlag = flag.String("socket", "", "control socket path (default: a per-user private location)")
 		portFlag = flag.Int("port", 0, "listen port (overrides config for this run)")
 	)
 	flag.Parse()
 	log.SetOutput(dbg.Writer())
+
+	if *sockFlag == "" {
+		p, err := socketPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "socket: %v\n", err)
+			os.Exit(1)
+		}
+		*sockFlag = p
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -685,8 +772,17 @@ func main() {
 	eng.pumpEvents(ctx)
 	disc.Announce()
 
+	if err := prepareSocket(*sockFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "socket: %v\n", err)
+		os.Exit(1)
+	}
 	ln, err := net.Listen("unix", *sockFlag)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "socket: %v\n", err)
+		os.Exit(1)
+	}
+	// The directory is the real gate; the socket mode is depth on top.
+	if err := os.Chmod(*sockFlag, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "socket: %v\n", err)
 		os.Exit(1)
 	}
@@ -710,6 +806,10 @@ func main() {
 			if ctx.Err() != nil {
 				return
 			}
+			continue
+		}
+		if !sameUser(conn) {
+			conn.Close()
 			continue
 		}
 		go eng.serveClient(ctx, conn)

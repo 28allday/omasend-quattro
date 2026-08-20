@@ -34,9 +34,15 @@ Item {
   // this file — the engine is installed from the same commit as the UI.
   readonly property string pluginDir:
     Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
+  // Must mirror socketPath() in cmd/omasend-engine/main.go. Never a shared
+  // directory like /tmp: a predictable name there can be pre-created by
+  // another local user, whose fake engine would receive every PIN, path and
+  // message this client sends. The engine creates the fallback dir 0700.
   readonly property string socketPath: {
     var rt = Quickshell.env("XDG_RUNTIME_DIR")
-    return rt && rt !== "" ? rt + "/omasend.sock" : "/tmp/omasend.sock"
+    if (rt && rt !== "")
+      return rt + "/omasend.sock"
+    return Quickshell.env("HOME") + "/.local/state/omasend/omasend.sock"
   }
 
   // ------------------------------------------------------------------ state
