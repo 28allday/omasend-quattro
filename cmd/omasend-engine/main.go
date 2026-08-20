@@ -720,14 +720,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "receive dir: %v\n", err)
 	}
 
-	// Single instance per socket: a live engine answers a dial; a stale file
-	// from a crash does not and is swept.
-	if conn, err := net.DialTimeout("unix", *sockFlag, time.Second); err == nil {
-		conn.Close()
-		fmt.Fprintf(os.Stderr, "engine already running on %s\n", *sockFlag)
+	// Single-instance and stale-socket handling, before anything binds a
+	// network port: prepareSocket refuses a live engine or a non-socket file
+	// at the path, and removes only a socket nothing answered on. (An
+	// unguarded dial-then-remove used to sit here — it could delete a
+	// non-socket file and, on a transient dial failure, unlink a live
+	// engine's socket.)
+	if err := prepareSocket(*sockFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "socket: %v\n", err)
 		os.Exit(1)
 	}
-	_ = os.Remove(*sockFlag)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -772,10 +774,6 @@ func main() {
 	eng.pumpEvents(ctx)
 	disc.Announce()
 
-	if err := prepareSocket(*sockFlag); err != nil {
-		fmt.Fprintf(os.Stderr, "socket: %v\n", err)
-		os.Exit(1)
-	}
 	ln, err := net.Listen("unix", *sockFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "socket: %v\n", err)
