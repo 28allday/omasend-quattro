@@ -154,3 +154,26 @@ func TestSameUserAcceptsOwnConnection(t *testing.T) {
 		t.Fatal("sameUser rejected a same-uid connection")
 	}
 }
+
+// A dial outcome other than ECONNREFUSED proves nothing about liveness, so
+// the socket must be left alone and startup refused. chmod 000 gives a
+// deterministic EACCES on dial.
+func TestPrepareSocketKeepsSocketOnAmbiguousDial(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "omasend.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSocket(path); err == nil {
+		t.Fatal("prepareSocket removed a socket it could not dial conclusively")
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatal("the ambiguous socket was deleted")
+	}
+}

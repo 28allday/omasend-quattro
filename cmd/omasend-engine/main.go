@@ -359,11 +359,25 @@ func (e *engine) pumpTransfers(ctx context.Context, ch <-chan transfer.Event, di
 	}
 }
 
+// maxHeldOffers bounds how many pre-accept offers may be parked at once.
+// Each parked offer retains the sender's decoded file metadata (itself
+// bounded by the prepare-upload body cap) for up to 55 seconds, so without
+// this the offer stage would be remote-driven unbounded memory — the
+// session caps only apply after an accept. Past the cap new offers are
+// declined immediately; no user is going to answer nine simultaneous
+// prompts anyway.
+const maxHeldOffers = 8
+
 // holdOffer parks an incoming accept request, tells the clients, and waits for
 // an accept/decline reply (or times out declining). Runs in its own goroutine
 // so the server's prepare-upload handler keeps blocking on req.Reply.
 func (e *engine) holdOffer(ctx context.Context, req server.AcceptRequest) {
 	e.offerMu.Lock()
+	if len(e.offers) >= maxHeldOffers {
+		e.offerMu.Unlock()
+		req.Reply <- server.AcceptDecision{Accept: false}
+		return
+	}
 	e.offerID++
 	id := "offer-" + strconv.FormatInt(e.offerID, 10)
 	e.offers[id] = req
@@ -659,6 +673,13 @@ func prepareSocket(path string) error {
 	if err == nil {
 		conn.Close()
 		return fmt.Errorf("another engine is already serving %s", path)
+	}
+	// Only a refused connection proves no listener holds the socket. Any
+	// other dial outcome — a timeout against a busy engine, a permission
+	// error — is ambiguous, and removing on it could unlink a live engine's
+	// socket. Refuse to start instead of guessing.
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return fmt.Errorf("cannot tell whether %s is live (dial: %v) — not removing it; retry, or remove it yourself if the engine is gone", path, err)
 	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("stale socket: %w", err)
