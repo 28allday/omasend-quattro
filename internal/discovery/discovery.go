@@ -49,6 +49,13 @@ const (
 	peerTTL = 20 * time.Second
 	// reapInterval is how often we check for stale peers.
 	reapInterval = 5 * time.Second
+	// maxPeers bounds the peer table. Announces are unauthenticated, so
+	// without a cap anyone on the network could grow the table (and the
+	// panel's device list) without limit by spraying random fingerprints.
+	// At the cap, unknown fingerprints are dropped rather than evicting a
+	// known peer — an attacker filling the table must not push real
+	// devices out, and their fakes age out via peerTTL anyway.
+	maxPeers = 256
 )
 
 // Discoverer announces this device and tracks discovered peers.
@@ -378,6 +385,10 @@ func (d *Discoverer) NotePeer(info protocol.DeviceInfo, ip string) {
 	// from 127.0.0.1 — recording that would make us "reply" to ourselves.
 	if existed && isLoopback(ip) && !isLoopback(prev.IP) {
 		peer.IP = prev.IP
+	}
+	if !existed && len(d.peers) >= maxPeers {
+		d.mu.Unlock()
+		return
 	}
 	changed := !existed || prev.IP != peer.IP || prev.Info.Alias != info.Alias
 	d.peers[info.Fingerprint] = peer

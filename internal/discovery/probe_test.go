@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -125,5 +126,26 @@ func TestHostPortDefaults(t *testing.T) {
 	}
 	if h, p := hostPort("100.64.0.2:9999"); h != "100.64.0.2" || p != 9999 {
 		t.Errorf("hostPort(host:port) = %q,%d; want 100.64.0.2,9999", h, p)
+	}
+}
+
+// The peer table is capped: announces are unauthenticated, so unknown
+// fingerprints past maxPeers are dropped — and a known peer still updates,
+// so a full table cannot push real devices out.
+func TestNotePeerBoundsTable(t *testing.T) {
+	d := New(protocol.DeviceInfo{Fingerprint: "self-fp"})
+	for i := 0; i < maxPeers; i++ {
+		d.NotePeer(protocol.DeviceInfo{Alias: "fake", Fingerprint: fmt.Sprintf("fp-%d", i), Port: 1}, "10.0.0.1")
+	}
+	d.NotePeer(protocol.DeviceInfo{Alias: "late", Fingerprint: "fp-late", Port: 1}, "10.0.0.2")
+	if got := len(d.Snapshot()); got != maxPeers {
+		t.Fatalf("peer table = %d entries, want capped at %d", got, maxPeers)
+	}
+	// A peer already in the table still updates at the cap.
+	d.NotePeer(protocol.DeviceInfo{Alias: "renamed", Fingerprint: "fp-0", Port: 1}, "10.0.0.3")
+	for _, p := range d.Snapshot() {
+		if p.Info.Fingerprint == "fp-0" && p.Info.Alias != "renamed" {
+			t.Fatal("known peer failed to update at the cap")
+		}
 	}
 }

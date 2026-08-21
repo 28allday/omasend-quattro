@@ -408,6 +408,7 @@ Item {
           height: Style.font.title + Style.spacing.lg
 
           Text {
+            textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             text: "󰒊  Omasend"
@@ -418,6 +419,7 @@ Item {
           }
 
           Text {
+            textFormat: Text.PlainText
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             text: {
@@ -434,6 +436,7 @@ Item {
 
         // Transient status / hint line.
         Text {
+          textFormat: Text.PlainText
           visible: root.statusLine !== ""
           width: parent.width
           text: root.statusLine
@@ -467,6 +470,7 @@ Item {
                 height: Style.font.body + Style.spacing.controlPaddingY * 2
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.left: parent.left
                   anchors.right: offerButtons.left
                   anchors.rightMargin: Style.spacing.md
@@ -529,6 +533,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: "Send " + root.stagedPaths.length + " item(s) — pick a device, press Enter or double-click"
                 color: root.foreground
@@ -537,6 +542,7 @@ Item {
                 elide: Text.ElideRight
               }
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: root.stagedPaths.map(function(p) {
                   var s = String(p); var i = s.lastIndexOf("/")
@@ -613,6 +619,7 @@ Item {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: devGlyph
                 anchors.left: parent.left
                 anchors.leftMargin: Style.spacing.md
@@ -630,6 +637,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
 
                 Text {
+                  textFormat: Text.PlainText
                   width: parent.width
                   text: modelData.alias
                   color: root.selectedIndex === index ? root.selText : root.foreground
@@ -638,6 +646,7 @@ Item {
                   elide: Text.ElideRight
                 }
                 Text {
+                  textFormat: Text.PlainText
                   width: parent.width
                   text: (modelData.model ? modelData.model + " · " : "") + modelData.ip
                   color: Qt.darker(root.selectedIndex === index ? root.selText : root.foreground, 1.4)
@@ -673,6 +682,7 @@ Item {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: root.peers.length === 0
               anchors.centerIn: parent
               text: root.hasService && root.svc.connected
@@ -701,6 +711,7 @@ Item {
               width: ListView.view.width
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: (modelData.outgoing ? "→ " + (modelData.to || "peer")
                                           : "← " + modelData.from)
@@ -710,6 +721,7 @@ Item {
                 font.pixelSize: Style.font.caption
               }
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: modelData.text
                 color: root.foreground
@@ -720,6 +732,7 @@ Item {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: root.messages.length === 0
               anchors.centerIn: parent
               text: "No messages yet.\nPick a device and press Enter to send one."
@@ -757,6 +770,7 @@ Item {
                   height: Math.max(Style.font.body + Style.spacing.xs, trDismiss.implicitHeight)
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.left: parent.left
                     anchors.right: trStatus.left
                     anchors.rightMargin: Style.spacing.md
@@ -785,6 +799,7 @@ Item {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     id: trStatus
                     anchors.right: trDismiss.visible ? trDismiss.left : parent.right
                     anchors.rightMargin: trDismiss.visible ? Style.spacing.sm : 0
@@ -825,6 +840,7 @@ Item {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   visible: modelData.error !== ""
                   width: parent.width
                   text: modelData.error
@@ -837,6 +853,7 @@ Item {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: root.transfers.length === 0
               anchors.centerIn: parent
               text: "No transfers."
@@ -859,6 +876,7 @@ Item {
               spacing: Style.spacing.md
 
               Text {
+                textFormat: Text.PlainText
                 text: "Alias"
                 width: Style.space(110)
                 anchors.verticalCenter: parent.verticalCenter
@@ -893,6 +911,7 @@ Item {
               spacing: Style.spacing.md
 
               Text {
+                textFormat: Text.PlainText
                 text: "PIN"
                 width: Style.space(110)
                 anchors.verticalCenter: parent.verticalCenter
@@ -937,6 +956,7 @@ Item {
 
             // The receive folder is fixed (~/Omasend) — shown, not editable.
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: "Files land in " + (root.hasService && root.svc.receiveDir !== ""
                                         ? root.svc.receiveDir : "~/Omasend")
@@ -951,6 +971,7 @@ Item {
               spacing: Style.spacing.md
 
               Text {
+                textFormat: Text.PlainText
                 text: "Auto-accept"
                 width: Style.space(110)
                 anchors.verticalCenter: parent.verticalCenter
@@ -967,6 +988,7 @@ Item {
             PanelSectionHeader { text: "ENGINE" }
 
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: {
                 if (!root.hasService) return "Service not loaded."
@@ -1005,6 +1027,7 @@ Item {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: root.hasService && root.svc.engineMissing
               width: parent.width
               text: "Or from a terminal: " + (root.hasService ? root.svc.pluginDir : "<plugin dir>") + "/bin/omasend-setup"
@@ -1019,6 +1042,7 @@ Item {
 
       // ----------------------------------------------------------- footer
       Text {
+        textFormat: Text.PlainText
         id: footer
         anchors.bottom: parent.bottom
         anchors.left: parent.left
@@ -1080,6 +1104,7 @@ Item {
             spacing: Style.spacing.lg
 
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: root.modalTitle()
               color: root.accent

@@ -105,6 +105,8 @@ type Server struct {
 	accepts   chan AcceptRequest
 	transfers chan transfer.Event
 	messages  chan ReceivedMessage
+
+	pinLimit *pinLimiter
 }
 
 // ReceivedMessage is a plain-text message received from a peer (LocalSend
@@ -126,6 +128,7 @@ func New(opts Options) *Server {
 		accepts:    make(chan AcceptRequest, 8),
 		transfers:  make(chan transfer.Event, 256),
 		messages:   make(chan ReceivedMessage, 32),
+		pinLimit:   newPINLimiter(),
 	}
 	s.autoAccept.Store(opts.AutoAccept)
 	mux := http.NewServeMux()
@@ -251,10 +254,22 @@ func (s *Server) handlePrepareUpload(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	pin := s.pin
 	s.mu.Unlock()
-	if pin != "" && r.URL.Query().Get("pin") != pin {
-		dbg.Logf("prepare-upload from %s: PIN missing/incorrect -> 401", clientIP(r))
-		http.Error(w, "pin required", http.StatusUnauthorized)
-		return
+	if pin != "" {
+		ip := clientIP(r)
+		// Lockout first, and without comparing: a locked-out source learns
+		// nothing about the PIN, not even from a correct guess.
+		if s.pinLimit.locked(ip) {
+			dbg.Logf("prepare-upload from %s: PIN locked out -> 429", ip)
+			http.Error(w, "too many attempts", http.StatusTooManyRequests)
+			return
+		}
+		if !pinMatches(r.URL.Query().Get("pin"), pin) {
+			s.pinLimit.fail(ip)
+			dbg.Logf("prepare-upload from %s: PIN missing/incorrect -> 401", ip)
+			http.Error(w, "pin required", http.StatusUnauthorized)
+			return
+		}
+		s.pinLimit.success(ip)
 	}
 
 	// A "message" is a single text file whose content rides in the preview
