@@ -163,8 +163,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	disc := discovery.New(cfg.DeviceInfo())
-
 	var cert *tls.Certificate
 	if cfg.Protocol == "https" {
 		c, err := cfg.TLSCertificate()
@@ -174,6 +172,8 @@ func main() {
 		}
 		cert = &c
 	}
+
+	disc := discovery.New(cfg.DeviceInfo(), cert)
 
 	srv := server.New(server.Options{
 		Info:       cfg.DeviceInfo(),
@@ -192,7 +192,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	sender := client.New(cfg.DeviceInfo())
+	sender := client.New(cfg.DeviceInfo(), cert)
 
 	// notifyOn is the live notification gate: the user's preference (-no-notify /
 	// the Settings toggle), AND only meaningful where notify-send can actually
@@ -229,12 +229,19 @@ func runQuickSend(cfg config.Config, paths []string) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	disc := discovery.New(cfg.DeviceInfo())
+	var cert *tls.Certificate
+	if cfg.Protocol == "https" {
+		if c, err := cfg.TLSCertificate(); err == nil {
+			cert = &c
+		}
+	}
+
+	disc := discovery.New(cfg.DeviceInfo(), cert)
 	if err := disc.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "discovery: %v\n", err)
 		return 1
 	}
-	sender := client.New(cfg.DeviceInfo())
+	sender := client.New(cfg.DeviceInfo(), cert)
 
 	// No receiver in quick-send mode, so nothing to notify about.
 	notifyOff := &atomic.Bool{}
@@ -278,7 +285,14 @@ func runHeadlessSend(cfg config.Config, target, message, sendPIN string, wait ti
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	disc := discovery.New(cfg.DeviceInfo())
+	var cert *tls.Certificate
+	if cfg.Protocol == "https" {
+		if c, err := cfg.TLSCertificate(); err == nil {
+			cert = &c
+		}
+	}
+
+	disc := discovery.New(cfg.DeviceInfo(), cert)
 	if err := disc.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "discovery: %v\n", err)
 		return 1
@@ -311,7 +325,7 @@ func runHeadlessSend(cfg config.Config, target, message, sendPIN string, wait ti
 		return 1
 	}
 
-	sender := client.New(cfg.DeviceInfo())
+	sender := client.New(cfg.DeviceInfo(), cert)
 
 	reportErr := func(err error) {
 		switch {

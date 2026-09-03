@@ -445,6 +445,9 @@ func (e *engine) resolveOffer(id string, accept bool) {
 func (e *engine) findPeer(ctx context.Context, to, ip string, wait time.Duration) (discovery.Peer, error) {
 	fctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
+	if ip != "" {
+		_ = e.disc.Probe(fctx, ip)
+	}
 	want := strings.ToLower(strings.TrimSpace(to))
 	return e.disc.FindPeer(fctx, func(p discovery.Peer) bool {
 		if ip != "" {
@@ -755,8 +758,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	disc := discovery.New(cfg.DeviceInfo())
-
 	var cert *tls.Certificate
 	if cfg.Protocol == "https" {
 		c, err := cfg.TLSCertificate()
@@ -766,6 +767,8 @@ func main() {
 		}
 		cert = &c
 	}
+
+	disc := discovery.New(cfg.DeviceInfo(), cert)
 
 	srv := server.New(server.Options{
 		Info:       cfg.DeviceInfo(),
@@ -784,7 +787,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	sender := client.New(cfg.DeviceInfo())
+	sender := client.New(cfg.DeviceInfo(), cert)
 	rem := remotes.NewSet(cfg.KnownPeers)
 	go remotes.Watch(ctx, disc, rem)
 

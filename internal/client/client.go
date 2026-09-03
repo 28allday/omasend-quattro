@@ -47,6 +47,7 @@ type inflight struct {
 type Sender struct {
 	mu     sync.Mutex
 	self   protocol.DeviceInfo
+	cert   *tls.Certificate
 	http   *http.Client
 	events chan transfer.Event
 	active map[string]*inflight // in-flight sends keyed by peer IP
@@ -59,11 +60,20 @@ type Sender struct {
 	pinned map[string]*http.Client
 }
 
-// New returns a Sender advertising self. TLS chain validation is disabled (we
-// rely on LocalSend's fingerprint model, like the discovery client).
-func New(self protocol.DeviceInfo) *Sender {
+// New returns a Sender advertising self. If a TLS certificate is provided,
+// it is attached to outbound HTTP clients for mutual TLS (mTLS) with iOS/Android peers.
+func New(self protocol.DeviceInfo, certs ...*tls.Certificate) *Sender {
+	var clientCert *tls.Certificate
+	if len(certs) > 0 && certs[0] != nil {
+		clientCert = certs[0]
+	}
+	var tlsCerts []tls.Certificate
+	if clientCert != nil {
+		tlsCerts = []tls.Certificate{*clientCert}
+	}
 	return &Sender{
 		self: self,
+		cert: clientCert,
 		http: &http.Client{
 			// No overall timeout (large files), but bound the parts that can
 			// silently wedge on a vanished peer: connecting, the TLS handshake,
@@ -73,8 +83,17 @@ func New(self protocol.DeviceInfo) *Sender {
 				// Proxy env vars + tailnet SOCKS5 auto-detection (see
 				// discovery) so transfers also work from userspace-networking
 				// Tailscale boxes.
-				Proxy:                 tsproxy.ProxyFunc,
-				TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+				Proxy: tsproxy.ProxyFunc,
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+					Certificates:       tlsCerts,
+					GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+						if clientCert != nil {
+							return clientCert, nil
+						}
+						return &tls.Certificate{}, nil
+					},
+				},
 				DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ResponseHeaderTimeout: 30 * time.Second,
@@ -100,6 +119,10 @@ func (s *Sender) clientFor(fingerprint string) *http.Client {
 	if c, ok := s.pinned[want]; ok {
 		return c
 	}
+	var tlsCerts []tls.Certificate
+	if s.cert != nil {
+		tlsCerts = []tls.Certificate{*s.cert}
+	}
 	c := &http.Client{
 		Timeout: 0,
 		Transport: &http.Transport{
@@ -108,6 +131,13 @@ func (s *Sender) clientFor(fingerprint string) *http.Client {
 				// Still no chain validation — these are self-signed by design.
 				// The fingerprint check below is what authenticates the peer.
 				InsecureSkipVerify: true,
+				Certificates:       tlsCerts,
+				GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+					if s.cert != nil {
+						return s.cert, nil
+					}
+					return &tls.Certificate{}, nil
+				},
 				VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 					if len(rawCerts) == 0 {
 						return fmt.Errorf("peer presented no certificate")

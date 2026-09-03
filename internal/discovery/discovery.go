@@ -64,20 +64,33 @@ type Discoverer struct {
 	events chan Event
 	client *http.Client
 	gaddr  *net.UDPAddr
+	cert   *tls.Certificate
 
-	mu       sync.Mutex
-	conn     *net.UDPConn    // multicast listener (group-bound)
-	sendConn *net.UDPConn    // dedicated sender (dialed to the group)
-	peers    map[string]Peer // keyed by fingerprint
+	mu        sync.Mutex
+	conn      *net.UDPConn    // multicast listener (group-bound)
+	listeners []*net.UDPConn  // all active multicast listeners
+	sendConn  *net.UDPConn    // dedicated sender (dialed to the group)
+	bcastConn *net.UDPConn    // broadcast sender
+	peers     map[string]Peer // keyed by fingerprint
 }
 
-// New returns a Discoverer that advertises self.
-func New(self protocol.DeviceInfo) *Discoverer {
+// New returns a Discoverer that advertises self. If a TLS certificate is provided,
+// it is attached to outbound HTTP clients for mutual TLS (mTLS) with iOS/Android peers.
+func New(self protocol.DeviceInfo, certs ...*tls.Certificate) *Discoverer {
+	var clientCert *tls.Certificate
+	if len(certs) > 0 && certs[0] != nil {
+		clientCert = certs[0]
+	}
+	var tlsCerts []tls.Certificate
+	if clientCert != nil {
+		tlsCerts = []tls.Certificate{*clientCert}
+	}
 	return &Discoverer{
 		self:   self,
+		cert:   clientCert,
 		events: make(chan Event, 64),
 		// Peers use self-signed certs; we don't validate the chain (LocalSend
-		// pins the announced fingerprint instead).
+		// pins the announced fingerprint instead). Client certificates are supplied for mTLS.
 		client: &http.Client{
 			Timeout: 3 * time.Second,
 			Transport: &http.Transport{
@@ -85,8 +98,17 @@ func New(self protocol.DeviceInfo) *Discoverer {
 				// tailnet destinations are auto-routed through the local
 				// tailscaled SOCKS5 proxy on userspace-networking boxes (no
 				// TUN), where direct outbound tailnet dials cannot work.
-				Proxy:           tsproxy.ProxyFunc,
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				Proxy: tsproxy.ProxyFunc,
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+					Certificates:       tlsCerts,
+					GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+						if clientCert != nil {
+							return clientCert, nil
+						}
+						return &tls.Certificate{}, nil
+					},
+				},
 			},
 		},
 		peers: make(map[string]Peer),
@@ -108,26 +130,24 @@ func (d *Discoverer) Snapshot() []Peer {
 }
 
 // FindPeer waits for a known peer satisfying pred, checking peers already seen
-// first and then ones discovered while waiting. It returns the first match, or
-// ctx.Err() if the context is cancelled / times out first. It consumes the
-// Events() channel, so it must not run concurrently with another Events()
-// reader (e.g. the TUI bridge) — it is intended for the headless send path.
+// first and then polling discovered peers until ctx is cancelled / times out.
 func (d *Discoverer) FindPeer(ctx context.Context, pred func(Peer) bool) (Peer, error) {
 	for _, p := range d.Snapshot() {
 		if pred(p) {
 			return p, nil
 		}
 	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return Peer{}, ctx.Err()
-		case ev, ok := <-d.events:
-			if !ok {
-				return Peer{}, ctx.Err()
-			}
-			if ev.Kind == PeerFound && pred(ev.Peer) {
-				return ev.Peer, nil
+		case <-ticker.C:
+			for _, p := range d.Snapshot() {
+				if pred(p) {
+					return p, nil
+				}
 			}
 		}
 	}
@@ -149,8 +169,8 @@ func (d *Discoverer) selfCopy() protocol.DeviceInfo {
 	return d.self
 }
 
-// Run joins the multicast group and starts the listener and announcer
-// goroutines. It returns once the socket is bound.
+// Run joins the multicast group on all available interfaces and starts the listener
+// and announcer goroutines. It returns once the sockets are bound.
 func (d *Discoverer) Run(ctx context.Context) error {
 	gaddr, err := net.ResolveUDPAddr("udp4",
 		net.JoinHostPort(protocol.MulticastAddr, strconv.Itoa(protocol.MulticastPort)))
@@ -165,47 +185,125 @@ func (d *Discoverer) Run(ctx context.Context) error {
 	}
 	_ = conn.SetReadBuffer(1 << 20)
 
+	listeners := []*net.UDPConn{conn}
+
+	// Also bind multicast on each active physical interface so multicast packets
+	// are received even if a VPN tunnel holds the default route.
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, ifi := range ifaces {
+			if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 || ifi.Flags&net.FlagMulticast == 0 {
+				continue
+			}
+			if mconn, err := net.ListenMulticastUDP("udp4", &ifi, gaddr); err == nil {
+				_ = mconn.SetReadBuffer(1 << 20)
+				listeners = append(listeners, mconn)
+			}
+		}
+	}
+
 	// A packet sent via the group-bound listen socket does not loop back to
 	// other local members, so announcements go out on a dedicated dialed socket
 	// whose source interface the kernel picks (which does loop back correctly).
 	sendConn, err := net.DialUDP("udp4", nil, gaddr)
 	if err != nil {
-		_ = conn.Close()
+		for _, l := range listeners {
+			_ = l.Close()
+		}
 		return err
 	}
 
+	bcastConn, _ := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+
 	d.mu.Lock()
 	d.conn = conn
+	d.listeners = listeners
 	d.sendConn = sendConn
+	d.bcastConn = bcastConn
 	d.gaddr = gaddr
 	d.mu.Unlock()
 
-	go d.listen(ctx, conn)
+	for _, l := range listeners {
+		go d.listen(ctx, l)
+	}
 	go d.announceLoop(ctx)
 	go d.reapLoop(ctx)
 
 	go func() {
 		<-ctx.Done()
-		_ = conn.Close()
-		_ = sendConn.Close()
+		d.mu.Lock()
+		for _, l := range d.listeners {
+			_ = l.Close()
+		}
+		if d.sendConn != nil {
+			_ = d.sendConn.Close()
+		}
+		if d.bcastConn != nil {
+			_ = d.bcastConn.Close()
+		}
+		d.mu.Unlock()
 	}()
 	return nil
 }
 
-// Announce multicasts our presence with announce:true, soliciting replies.
+// broadcastTargets returns all subnet broadcast addresses and the global broadcast address.
+func (d *Discoverer) broadcastTargets() []*net.UDPAddr {
+	targets := []*net.UDPAddr{
+		{IP: net.IPv4bcast, Port: protocol.MulticastPort},
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return targets
+	}
+	seen := map[string]bool{net.IPv4bcast.String(): true}
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.To4() == nil {
+				continue
+			}
+			ip := ipNet.IP.To4()
+			mask := ipNet.Mask
+			if len(mask) != 4 {
+				continue
+			}
+			bcast := net.IPv4(ip[0]|^mask[0], ip[1]|^mask[1], ip[2]|^mask[2], ip[3]|^mask[3])
+			bcastStr := bcast.String()
+			if !seen[bcastStr] {
+				seen[bcastStr] = true
+				targets = append(targets, &net.UDPAddr{IP: bcast, Port: protocol.MulticastPort})
+			}
+		}
+	}
+	return targets
+}
+
+// Announce multicasts and broadcasts our presence with announce:true, soliciting replies.
 func (d *Discoverer) Announce() {
 	d.mu.Lock()
 	send := d.sendConn
+	bcast := d.bcastConn
 	self := d.self
 	d.mu.Unlock()
-	if send == nil {
-		return
-	}
+
 	payload, err := json.Marshal(self.WithAnnounce(true))
 	if err != nil {
 		return
 	}
-	_, _ = send.Write(payload)
+	if send != nil {
+		_, _ = send.Write(payload)
+	}
+	if bcast != nil {
+		for _, target := range d.broadcastTargets() {
+			_, _ = bcast.WriteToUDP(payload, target)
+		}
+	}
 }
 
 func (d *Discoverer) announceLoop(ctx context.Context) {
