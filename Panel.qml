@@ -149,6 +149,12 @@ Item {
     root.openModal("files", peer)
   }
 
+  function copyMessage(text) {
+    if (!text) return
+    Quickshell.execDetached(["wl-copy", "--", String(text)])
+    root.statusLine = "Copied to clipboard"
+  }
+
   function close() {
     if (!root.opened) return
     root.opened = false
@@ -709,19 +715,44 @@ Item {
             delegate: Column {
               required property var modelData
               width: ListView.view.width
+              spacing: Style.spacing.xs
 
-              Text {
-                textFormat: Text.PlainText
+              Item {
                 width: parent.width
-                text: (modelData.outgoing ? "→ " + (modelData.to || "peer")
-                                          : "← " + modelData.from)
-                      + "   " + root.timeLabel(modelData.time)
-                color: modelData.outgoing ? root.accent : Qt.darker(root.foreground, 1.3)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
+                height: Math.max(Style.font.caption + Style.spacing.xs, msgCopyBtn.implicitHeight)
+
+                Text {
+                  textFormat: Text.PlainText
+                  anchors.left: parent.left
+                  anchors.right: msgCopyBtn.left
+                  anchors.rightMargin: Style.spacing.sm
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: (modelData.outgoing ? "→ " + (modelData.to || "peer")
+                                            : "← " + modelData.from)
+                        + "   " + root.timeLabel(modelData.time)
+                  color: modelData.outgoing ? root.accent : Qt.darker(root.foreground, 1.3)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+
+                Button {
+                  id: msgCopyBtn
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "󰅍"
+                  tooltipText: "Copy text"
+                  verticalPadding: 0
+                  onClicked: root.copyMessage(modelData.text)
+                }
               }
-              Text {
+
+              TextEdit {
                 textFormat: Text.PlainText
+                readOnly: true
+                selectByMouse: true
+                selectedTextColor: root.selText
+                selectionColor: root.selBg
                 width: parent.width
                 text: modelData.text
                 color: root.foreground
