@@ -90,7 +90,7 @@ func TestLoadMigratesLegacyConfigWithOwnReceiveDir(t *testing.T) {
 	if err := os.MkdirAll(legacy, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	seed := map[string]any{"alias": "gav", "receiveDir": filepath.Join(home, "Omarchy-Send")}
+	seed := map[string]any{"alias": "desktop", "receiveDir": filepath.Join(home, "Omarchy-Send")}
 	data, _ := json.Marshal(seed)
 	if err := os.WriteFile(filepath.Join(legacy, "config.json"), data, 0o600); err != nil {
 		t.Fatalf("seed legacy config: %v", err)
@@ -100,8 +100,8 @@ func TestLoadMigratesLegacyConfigWithOwnReceiveDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Alias != "gav" {
-		t.Fatalf("Alias = %q, want migrated %q", cfg.Alias, "gav")
+	if cfg.Alias != "desktop" {
+		t.Fatalf("Alias = %q, want migrated %q", cfg.Alias, "desktop")
 	}
 	if want := filepath.Join(home, "Omasend"); cfg.ReceiveDir != want {
 		t.Fatalf("ReceiveDir = %q, want fork default %q", cfg.ReceiveDir, want)

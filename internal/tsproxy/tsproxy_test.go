@@ -12,12 +12,12 @@ func TestIsTailnetHost(t *testing.T) {
 		host string
 		want bool
 	}{
-		{"100.90.62.102", true},                                           // tailnet (CGNAT range)
+		{"100.100.0.42", true},                                            // tailnet (CGNAT range)
 		{"100.64.0.1", true},                                              // range start
 		{"100.127.255.254", true} /* range end */, {"100.128.0.1", false}, // just past the /10
 		{"192.168.1.46", false}, // LAN
 		{"127.0.0.1", false},    // loopback
-		{"colossus", false},     // hostname, not an IP
+		{"workstation", false},  // hostname, not an IP
 		{"", false},
 	}
 	for _, c := range cases {
@@ -42,7 +42,7 @@ func stubEnvProxy(t *testing.T, u *url.URL) {
 func TestProxyFuncEnvOverride(t *testing.T) {
 	stubEnvProxy(t, &url.URL{Scheme: "socks5", Host: "127.0.0.1:9999"})
 	prime(&url.URL{Scheme: "socks5", Host: conventionalAddr}) // detection would say 1055
-	req, _ := http.NewRequest(http.MethodGet, "https://100.90.62.102:53317/info", nil)
+	req, _ := http.NewRequest(http.MethodGet, "https://100.100.0.42:53317/info", nil)
 	u, err := ProxyFunc(req)
 	if err != nil {
 		t.Fatalf("ProxyFunc: %v", err)
@@ -70,7 +70,7 @@ func TestProxyFuncNonTailnetDirect(t *testing.T) {
 // primed to "proxy present" the URL comes back, and direct otherwise.
 func TestProxyFuncTailnetUsesDetection(t *testing.T) {
 	stubEnvProxy(t, nil)
-	req, _ := http.NewRequest(http.MethodGet, "https://100.90.62.102:53317/info", nil)
+	req, _ := http.NewRequest(http.MethodGet, "https://100.100.0.42:53317/info", nil)
 
 	prime(&url.URL{Scheme: "socks5", Host: conventionalAddr})
 	u, err := ProxyFunc(req)
