@@ -216,8 +216,20 @@ omarchy-shell omasend status                            # engine health
 ```
 
 Sends are queued and delivered asynchronously; a failure raises a desktop
-notification. The installer also writes a managed block into
-`~/.claude/CLAUDE.md` so AI agents on the machine know how to use it.
+notification.
+
+If you want AI agents on the machine to know all of that without being told
+each time, the installer can write the same summary into `~/.claude/CLAUDE.md`
+as a marker-delimited block. That file is your standing instructions to your
+own agents, so Omasend never edits it uninvited — it is off unless you ask:
+
+```sh
+bash install.sh --agent-context
+```
+
+Run from a terminal without that flag, the installer asks once and takes no
+for an answer; piped or scripted, it simply skips it. `--no-agent-context`
+declines without being asked.
 
 ## Troubleshooting
 
@@ -272,16 +284,18 @@ set up the engine, run `install.sh`, or start receiving:
 | `~/Omasend/` | received files (configurable in Settings) |
 | `~/.local/share/icons/hicolor/scalable/apps/` | the paper-plane icon |
 | `~/.local/share/nautilus-python/extensions/omasend.py` | the "Send via Omasend" right-click entry |
-| `~/.claude/CLAUDE.md` | a delimited managed block telling AI agents how to send from scripts |
+| `~/.claude/CLAUDE.md` | **opt-in only** — a delimited managed block telling AI agents how to send from scripts, written solely if you pass `--agent-context` or accept the installer's prompt |
 
 Two of those are edits to files you may already own, so to be explicit about
-them: the `shell.json` entries are added with `jq` and leave the rest of the
+them. The `shell.json` entries are added with `jq` and leave the rest of the
 file untouched (the plugin re-adds its own `plugins[]` reference on first open
 if the shell dropped it — without that, removing the bar icon would kill the
-panel too); and the `CLAUDE.md` block sits between
-`<!-- BEGIN omasend -->` / `<!-- END omasend -->` markers, so re-running the
-installer replaces only that block and never the surrounding file. Neither is
-overwritten wholesale.
+panel too). `~/.claude/CLAUDE.md` is the one file Omasend will not touch on its
+own: it holds your instructions to your own agents, so the block is written
+only when you opt in with `--agent-context` or say yes to the prompt, and even
+then it sits between `<!-- BEGIN omasend -->` / `<!-- END omasend -->` markers
+so re-running the installer replaces that block and nothing around it. Neither
+file is overwritten wholesale.
 
 The one privileged step is installing zenity — `sudo pacman -S zenity`, only
 if it isn't already present, and it's non-fatal if you decline. The engine
@@ -299,9 +313,9 @@ rm ~/.local/share/icons/hicolor/scalable/apps/omasend.svg
 rm -rf ~/.config/omasend            # alias, PIN, pairing certificate
 ```
 
-That leaves received files in `~/Omasend` alone. The managed block in
-`~/.claude/CLAUDE.md` is delimited by its `BEGIN`/`END` markers if you want to
-delete it by hand.
+That leaves received files in `~/Omasend` alone. If you opted into the agent
+block, the one in `~/.claude/CLAUDE.md` is delimited by its `BEGIN`/`END`
+markers so you can delete it by hand.
 
 ## License
 

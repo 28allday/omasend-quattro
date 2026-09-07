@@ -18,14 +18,54 @@
 #      shell, so a non-quattro box wants the original omarchy-send TUI
 #      instead.
 #
+# Nothing outside Omasend's own files is touched unless you ask for it: the
+# optional block in ~/.claude/CLAUDE.md that teaches AI agents on this box how
+# to send is opt-in, via --agent-context (or a prompt when run interactively).
+#
+# Options:
+#   --agent-context          write the managed Omasend block into
+#                            ~/.claude/CLAUDE.md (default: don't)
+#   --no-agent-context       never write it, and don't ask
+#
 # Overrides:
 #   BIN_DIR=~/bin            install the engine somewhere else
 #   OMASEND_REPO=user/repo   download/register from a different repo
+#   OMASEND_AGENT_CONTEXT=1  same as --agent-context (0 = --no-agent-context)
 set -euo pipefail
 
 REPO="${OMASEND_REPO:-28allday/omasend-quattro}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 PLUGIN_ID="nosignal.omasend"
+
+# Opt-in for the ~/.claude/CLAUDE.md block: empty = undecided (ask if we have a
+# terminal, otherwise skip), 1 = write it, 0 = leave the file alone.
+AGENT_CONTEXT="${OMASEND_AGENT_CONTEXT:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent-context)    AGENT_CONTEXT=1 ;;
+    --no-agent-context) AGENT_CONTEXT=0 ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: install.sh [--agent-context | --no-agent-context]
+
+  --agent-context      also write Omasend's managed block into
+                       ~/.claude/CLAUDE.md, so AI agents on this box know
+                       how to send files from scripts. Off by default;
+                       when run from a terminal without either flag you
+                       are asked, and the default answer is no.
+  --no-agent-context   never write it, and don't ask.
+
+Environment: BIN_DIR, OMASEND_REPO, OMASEND_AGENT_CONTEXT.
+USAGE
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s (try --help)\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 # Resolve the clone dir when run from one (empty when curl-piped).
 SCRIPT_DIR=""
@@ -151,9 +191,35 @@ if command -v nautilus >/dev/null 2>&1; then
   nautilus -q >/dev/null 2>&1 || true
 fi
 
-# ---- 6. agent context ------------------------------------------------------
-# Teach AI agents on this box what Omasend is and how to send from scripts.
-# Idempotent: an existing managed block is replaced, other content is kept.
+# ---- 6. agent context (opt-in) ---------------------------------------------
+# Teach AI agents on this box what Omasend is and how to send from scripts, by
+# appending a marker-delimited block to ~/.claude/CLAUDE.md. That file is the
+# user's standing instructions to their agents, not ours, so we never touch it
+# uninvited: --agent-context / OMASEND_AGENT_CONTEXT=1 opts in, a terminal run
+# is asked (default no), and a piped or scripted run is simply skipped.
+if [ -z "$AGENT_CONTEXT" ]; then
+  if [ -t 0 ] && [ -t 1 ]; then
+    say ""
+    say "Optional: add an Omasend section to ~/.claude/CLAUDE.md so AI agents"
+    say "on this machine know how to send files and where received ones land."
+    say "It is a delimited block appended to that file; nothing else changes."
+    printf 'Add it? [y/N] '
+    read -r reply || reply=""
+    case "$reply" in
+      [Yy]*) AGENT_CONTEXT=1 ;;
+      *)     AGENT_CONTEXT=0 ;;
+    esac
+  else
+    AGENT_CONTEXT=0
+  fi
+fi
+
+if [ "$AGENT_CONTEXT" != "1" ]; then
+  say ""
+  say "Skipped the agent-context block in ~/.claude/CLAUDE.md. Add it later"
+  say "with: bash install.sh --agent-context"
+else
+
 claude_md="$HOME/.claude/CLAUDE.md"
 mkdir -p "$HOME/.claude"
 recv_dir="$HOME/Omasend"
@@ -164,6 +230,11 @@ if [ -f "$cfg" ] && command -v jq >/dev/null 2>&1; then
 fi
 if [ -f "$claude_md" ]; then
   sed -i '/<!-- BEGIN omasend (managed by installer) -->/,/<!-- END omasend (managed by installer) -->/d' "$claude_md"
+  # The block is appended after a blank separator line, which the removal
+  # above leaves behind — trim it so repeated runs can't stack blank lines.
+  while [ -s "$claude_md" ] && [ -z "$(tail -n 1 "$claude_md")" ]; do
+    sed -i '$d' "$claude_md"
+  done
 fi
 cat >> "$claude_md" <<AGENTEOF
 
@@ -192,6 +263,8 @@ health. Panel UI: \`omarchy-shell shell toggle $PLUGIN_ID\`.
 <!-- END omasend (managed by installer) -->
 AGENTEOF
 say "Agent context written to $claude_md."
+
+fi
 
 say ""
 say "Done. The bar icon lives in the right section; toggle the panel with:"
